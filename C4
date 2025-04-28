@@ -1,0 +1,8 @@
+# === STEP 1: LOAD INPUT FILE ===
+
+# Example: replace 'input.xlsx' with your actual Excel filename
+input_filename = 'input.xlsx'
+
+df = pd.read_excel(input_filename, engine='openpyxl')
+print(f"Loaded {len(df)} authors from Excel input.")
+df.head()
