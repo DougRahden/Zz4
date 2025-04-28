@@ -1,7 +1,7 @@
-# === STEP 1: LOAD INPUT FILE ===
+# === LOAD INPUT FILE ===
 
-# Example: replace 'input.xlsx' with your actual Excel filename
-input_filename = 'input.xlsx'
+# Updated to absolute D: path
+input_filename = 'D:/aa030/input/aa-counterintel-input.xlsx'
 
 df = pd.read_excel(input_filename, engine='openpyxl')
 print(f"Loaded {len(df)} authors from Excel input.")
