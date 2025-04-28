@@ -1,0 +1,20 @@
+# Very simple direct test
+import requests
+
+API_KEY = 'YOUR-REAL-API-KEY-HERE'
+
+headers = {
+    'X-ELS-APIKey': API_KEY,
+    'Accept': 'application/json'
+}
+
+# SCOPUS ping: find author "Albert Einstein" (he's indexed!)
+params = {
+    'query': 'AUTHLASTNAME(Einstein) AND AUTHFIRST(Albert)',
+    'count': 5
+}
+
+resp = requests.get("https://api.elsevier.com/content/search/author", headers=headers, params=params)
+
+print(resp.status_code)
+print(resp.text)
