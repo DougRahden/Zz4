@@ -1,0 +1,13 @@
+# === CONFIGURATION ===
+
+API_KEY = 'YOUR_SCOPUS_API_KEY'  # <<< PUT YOUR KEY HERE
+
+headers = {
+    'X-ELS-APIKey': API_KEY,
+    'Accept': 'application/json'
+}
+
+# SCOPUS URLs
+AUTHOR_SEARCH_URL = "https://api.elsevier.com/content/search/author"
+SCOPUS_SEARCH_URL = "https://api.elsevier.com/content/search/scopus"
+AUTHOR_RETRIEVAL_URL = "https://api.elsevier.com/content/author"  # not needed but left if you want to expand
