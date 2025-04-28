@@ -1,0 +1,149 @@
+# === STEP 2-6: Main Processing Loop ===
+
+for idx, row in df.iterrows():
+    first = str(row.get('first_name', '')).strip()
+    middle = str(row.get('middle_name', '')).strip()
+    last = str(row.get('last_name', '')).strip()
+    if not first or not last:
+        continue
+    
+    # Build author search query
+    if middle:
+        name_query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first} {middle})"
+    else:
+        name_query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
+    
+    logging.info(f"Searching SCOPUS for author: {first} {middle} {last}")
+    
+    # Search for authors
+    start = 0
+    author_candidates = []
+    while True:
+        params = {'query': name_query, 'start': start, 'count': 25}
+        resp = requests.get(AUTHOR_SEARCH_URL, headers=headers, params=params)
+        if resp.status_code != 200:
+            logging.error(f"Author search API error: {resp.status_code}")
+            break
+        data = resp.json()
+        entries = data.get('search-results', {}).get('entry', [])
+        if not entries:
+            break
+        author_candidates.extend(entries)
+        total = int(data['search-results']['opensearch:totalResults'])
+        start += 25
+        if start >= total:
+            break
+        time.sleep(1)
+
+    matched_author_id = None
+    matched_author_name = None
+    
+    # Prepare input affiliation-year pairs
+    input_affiliations = []
+    for i in range(1, 5):
+        affil = str(row.get(f'affiliation_{i}', '')).strip()
+        year = str(row.get(f'affiliation_{i}_year', '')).strip()
+        if affil and year:
+            input_affiliations.append((affil, year))
+
+    for author in author_candidates:
+        author_id = None
+        if 'dc:identifier' in author:
+            author_id = author['dc:identifier'].split(':')[-1]
+        
+        name_info = author.get('preferred-name', {})
+        author_name = f"{name_info.get('given-name', '')} {name_info.get('surname', '')}"
+
+        if not author_id:
+            continue
+
+        match_found = False
+        for affil, year in input_affiliations:
+            query = f"AU-ID({author_id}) AND AFFIL({affil}) AND PUBYEAR = {year}"
+            resp = requests.get(SCOPUS_SEARCH_URL, headers=headers, params={'query': query, 'count': 1})
+            if resp.status_code == 200:
+                pub_data = resp.json()
+                entries = pub_data.get('search-results', {}).get('entry', [])
+                if entries:
+                    match_found = True
+                    break
+            time.sleep(0.5)
+        
+        if match_found:
+            matched_author_id = author_id
+            matched_author_name = author_name.strip()
+            logging.info(f"Matched author {matched_author_name} with ID {author_id}")
+            break
+    
+    if not matched_author_id:
+        logging.warning(f"No SCOPUS author match for {first} {last}")
+        continue
+
+    # Retrieve publications
+    all_pubs = []
+    start = 0
+    total_pubs = 1
+    while start < total_pubs:
+        params = {'query': f"AU-ID({matched_author_id})", 'start': start, 'count': 100, 'view': 'COMPLETE'}
+        resp = requests.get(SCOPUS_SEARCH_URL, headers=headers, params=params)
+        if resp.status_code != 200:
+            logging.error(f"Publication search API error for author {matched_author_id}: {resp.status_code}")
+            break
+        pubs_page = resp.json()
+        entries = pubs_page.get('search-results', {}).get('entry', [])
+        if not entries:
+            break
+        all_pubs.extend(entries)
+        total_pubs = int(pubs_page['search-results']['opensearch:totalResults'])
+        start += 100
+        time.sleep(1)
+
+    logging.info(f"Found {len(all_pubs)} publications for {matched_author_name}")
+
+    # Process each publication
+    for pub in all_pubs:
+        title = pub.get('dc:title', 'Unknown Title')
+        cover_date = pub.get('prism:coverDate') or pub.get('prism:coverDisplayDate') or ''
+        pub_year = cover_date.split('-')[0] if cover_date else ''
+        
+        primary_affiliation_str = "Affiliation Unknown"
+        if 'author' in pub:
+            for author in pub['author']:
+                if 'authid' in author and author['authid'] == matched_author_id:
+                    affil_info = author.get('affiliation', [])
+                    if isinstance(affil_info, list):
+                        affil_names = []
+                        for aff in affil_info:
+                            parts = [aff.get('affilname'), aff.get('affiliation-city'), aff.get('affiliation-country')]
+                            affil_names.append(", ".join([p for p in parts if p]))
+                        primary_affiliation_str = " / ".join(affil_names)
+                    elif isinstance(affil_info, dict):
+                        parts = [affil_info.get('affilname'), affil_info.get('affiliation-city'), affil_info.get('affiliation-country')]
+                        primary_affiliation_str = ", ".join([p for p in parts if p])
+                    break
+        
+        primary_output.append([matched_author_name, title, primary_affiliation_str])
+
+        # Handle co-authors
+        if 'author' in pub:
+            for coauthor in pub['author']:
+                if coauthor.get('authid') == matched_author_id:
+                    continue
+                coauth_name = coauthor.get('authname', '')
+                coaffil_str = "Affiliation Unknown"
+                affil_info = coauthor.get('affiliation', [])
+                if isinstance(affil_info, list):
+                    affil_parts = []
+                    for aff in affil_info:
+                        parts = [aff.get('affilname'), aff.get('affiliation-city'), aff.get('affiliation-country')]
+                        affil_parts.append(", ".join([p for p in parts if p]))
+                    coaffil_str = " / ".join(affil_parts)
+                elif isinstance(affil_info, dict):
+                    parts = [affil_info.get('affilname'), affil_info.get('affiliation-city'), affil_info.get('affiliation-country')]
+                    coaffil_str = ", ".join([p for p in parts if p])
+                if coauth_name:
+                    parts = coauth_name.split(',')
+                    coauth_name_fmt = f"{parts[1].strip()} {parts[0].strip()}" if len(parts) == 2 else coauth_name
+                else:
+                    coauth_name_fmt = "Name Unknown"
+                secondary_output.append([coauth_name_fmt, matched_author_name, title, coaffil_str])
