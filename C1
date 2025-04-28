@@ -1,0 +1,2 @@
+# Install necessary packages if not already installed
+!pip install pandas openpyxl requests
