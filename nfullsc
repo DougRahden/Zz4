@@ -48,10 +48,27 @@ print(f"Loaded {len(df)} authors from input file.")
 def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
-# === Cell 6b: Main loop using Author Retrieval API (ENHANCED view) ===
+
+# === Cell 6b: Main loop using Author Retrieval API (ENHANCED view, with strict name matching and API call tracking) ===
 primary_output = []
 secondary_output = []
 max_candidates = 50  # throttle per row
+
+def name_similarity(input_first, input_last, candidate_fullname):
+    parts = candidate_fullname.lower().split()
+    if len(parts) < 2:
+        return False
+    candidate_first = parts[0]
+    candidate_last = parts[-1]
+    return (
+        candidate_last == input_last.lower() and
+        levenshtein_ratio(input_first.lower(), candidate_first) > 0.8
+    )
+
+api_calls = {
+    'author_search': 0,
+    'author_retrieval': 0
+}
 
 for idx, row in df.iterrows():
     first = str(row.get('first_name', '')).strip()
@@ -69,13 +86,14 @@ for idx, row in df.iterrows():
     for name_query in name_queries:
         if not name_query:
             continue
-        logging.info(f"Querying SCOPUS: {name_query}")
+        logging.info(f"[API] Querying SCOPUS: {name_query}")
         start = 0
         while True:
             params = {'query': name_query, 'start': start, 'count': 25}
             resp = requests.get(AUTHOR_SEARCH_URL, headers=headers, params=params)
+            api_calls['author_search'] += 1
             if resp.status_code != 200:
-                logging.error(f"Author search failed: {resp.status_code}")
+                logging.error(f"[API] Author search failed: {resp.status_code}")
                 break
             data = resp.json()
             entries = data.get('search-results', {}).get('entry', [])
@@ -90,7 +108,7 @@ for idx, row in df.iterrows():
                 break
             time.sleep(1)
 
-    logging.info(f"Found {len(author_candidates)} author candidates.")
+    logging.info(f"[Internal] Found {len(author_candidates)} author candidates.")
 
     known_affils = []
     for i in range(1, 5):
@@ -105,50 +123,62 @@ for idx, row in df.iterrows():
     for author in author_candidates:
         author_id = author.get('dc:identifier', '').split(':')[-1]
         full_name = f"{author.get('preferred-name', {}).get('given-name', '')} {author.get('preferred-name', {}).get('surname', '')}".strip()
-        logging.info(f"Checking author: {full_name} (ID: {author_id})")
 
-        # Use Author Retrieval API
-        url = f"https://api.elsevier.com/content/author/{author_id}?view=ENHANCED"
+        if not name_similarity(first, last, full_name):
+            logging.info(f"[Internal] Skipping name mismatch: Excel='{first} {last}' vs SCOPUS='{full_name}'")
+            continue
+
+        logging.info(f"[API] Checking author: {full_name} (ID: {author_id})")
+        url = f"https://api.elsevier.com/content/author/author_id/{author_id}?view=ENHANCED"
         resp = requests.get(url, headers=headers)
+        api_calls['author_retrieval'] += 1
         if resp.status_code != 200:
-            logging.warning(f"Failed to retrieve author {author_id}: {resp.status_code}")
+            logging.warning(f"[API] Failed to retrieve author {author_id}: {resp.status_code}")
             continue
 
         try:
             aff_history = resp.json()['author-retrieval-response'][0]['author-profile']['affiliation-history']['affiliation']
         except Exception as e:
-            logging.warning(f"No affiliation history for author {author_id}")
+            logging.warning(f"[Internal] No affiliation history for author {author_id}")
             continue
 
         if isinstance(aff_history, dict):
             aff_history = [aff_history]
 
         score = 0
-        for aff in aff_history:
-            aff_name = aff.get('affil-name', '').lower()
-            aff_year = aff.get('start-date')
-            try:
-                aff_year = int(aff_year) if aff_year else None
-            except:
-                aff_year = None
-            for known_name, known_year in known_affils:
+        matched_affils = set()
+        for known_name, known_year in known_affils:
+            for aff in aff_history:
+                aff_name = aff.get('affil-name', '').lower()
+                aff_year = aff.get('start-date')
+                try:
+                    aff_year = int(aff_year) if aff_year else None
+                except:
+                    aff_year = None
                 if fuzzy_match(known_name, aff_name):
                     if aff_year is None or abs(aff_year - known_year) <= 6:
-                        logging.info(f"Matched '{known_name}' ~ '{aff_name}' (aff year: {aff_year})")
-                        score += 1
-                        break
+                        if known_name not in matched_affils:
+                            logging.info(f"[Internal] Matched '{known_name}' ~ '{aff_name}' (aff year: {aff_year})")
+                            score += 1
+                            matched_affils.add(known_name)
+                            break
 
-        logging.info(f"Score for {full_name} (ID {author_id}): {score}")
+        logging.info(f"[Internal] Score for {full_name} (ID {author_id}): {score}")
 
         if score > best_score:
             best_score = score
             matched_author = (author_id, full_name)
 
     if not matched_author:
-        logging.warning(f"No match found for {first} {last}")
+        logging.warning(f"[Internal] No match found for {first} {last}")
         continue
 
-    logging.info(f"Selected author: {matched_author[1]} (ID: {matched_author[0]})")
+    logging.info(f"[Internal] Selected author: {matched_author[1]} (ID: {matched_author[0]})")
+
+# === At the end: show total API call usage ===
+print("\n=== SCOPUS API CALL STATS ===")
+print(f"Author search queries: {api_calls['author_search']}")
+print(f"Author retrieval calls: {api_calls['author_retrieval']}")
 
 
 # === Cell 7a: Process Primary Author Output ===
