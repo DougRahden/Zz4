@@ -1,4 +1,4 @@
-# === Cell 6be-AUTHORSEARCH: Pull list of SCOPUS author profiles by name + optional affiliation ===
+# === Cell 6be-AUTHORSEARCH: Pull list of SCOPUS author profiles by name + optional affiliation (hardened version) ===
 
 def search_scopus_authors_by_name(first, last, affil=None, max_results=100):
     base_url = "https://api.elsevier.com/content/search/author"
@@ -28,13 +28,16 @@ def search_scopus_authors_by_name(first, last, affil=None, max_results=100):
             break
 
         for entry in entries:
-            scopus_id = entry.get('dc:identifier', '').split(':')[-1]
-            name_data = entry.get('preferred-name', {})
-            full_name = f"{name_data.get('given-name', '')} {name_data.get('surname', '')}".strip()
-            current_affil = entry.get('affiliation-current', {}).get('affiliation-name', 'N/A')
-            if scopus_id not in seen_ids:
-                all_results.append((scopus_id, full_name, current_affil))
-                seen_ids.add(scopus_id)
+            try:
+                scopus_id = entry.get('dc:identifier', '').split(':')[-1]
+                name_data = entry.get('preferred-name', {})
+                full_name = f"{name_data.get('given-name', '')} {name_data.get('surname', '')}".strip()
+                current_affil = entry.get('affiliation-current', {}).get('affiliation-name', 'N/A')
+                if scopus_id and scopus_id not in seen_ids:
+                    all_results.append((scopus_id, full_name or 'N/A', current_affil))
+                    seen_ids.add(scopus_id)
+            except Exception as e:
+                print("[Internal] Skipped malformed entry.")
 
         params['start'] += 25
         if len(entries) < 25:
