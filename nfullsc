@@ -49,11 +49,18 @@ def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
 
-# === Cell 6bd-NAMEDOCQUERY: Debug name-based doc pull with author + affiliation listing ===
+# === Cell 6bd-NAMEDOCQUERY: Clean name search (AUTHFIRST initial only), 200 docs, fuzzy match + affiliation scan ===
 
-def inspect_documents_by_name_and_affil(first, last, affil_targets=None, max_docs=20):
+def inspect_documents_by_name_and_affil(first, last, affil_targets=None, max_docs=200):
+    fuzzy_name_threshold = 0.7
+
+    def name_fuzzy_match(first_target, first_candidate):
+        return levenshtein_ratio(first_target.lower(), first_candidate.lower()) >= fuzzy_name_threshold or \
+               first_target.lower().startswith(first_candidate.lower()) or \
+               first_candidate.lower().startswith(first_target.lower())
+
     base_url = "https://api.elsevier.com/content/search/scopus"
-    query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
+    query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first[0]})"
     params = {
         'query': query,
         'count': 25,
@@ -62,27 +69,34 @@ def inspect_documents_by_name_and_affil(first, last, affil_targets=None, max_doc
         'view': 'COMPLETE'
     }
 
-    docs = []
-    while len(docs) < max_docs:
+    all_docs = []
+    seen_eids = set()
+
+    while len(all_docs) < max_docs:
+        print(f"[API] Searching with query: {query} start={params['start']}")
         resp = requests.get(base_url, headers=headers, params=params)
         if resp.status_code != 200:
             print(f"Error: {resp.status_code}")
-            return
+            break
 
-        page = resp.json().get('search-results', {})
-        entries = page.get('entry', [])
+        entries = resp.json().get('search-results', {}).get('entry', [])
         if not entries:
             break
 
-        docs.extend(entries)
+        for doc in entries:
+            eid = doc.get('eid')
+            if eid and eid not in seen_eids:
+                all_docs.append(doc)
+                seen_eids.add(eid)
+
         params['start'] += 25
         if len(entries) < 25:
             break
         time.sleep(1)
 
-    print(f"\nRetrieved {len(docs)} documents for {first} {last}\n")
+    print(f"\nRetrieved {len(all_docs)} documents for {first} {last}\n")
 
-    for i, doc in enumerate(docs):
+    for i, doc in enumerate(all_docs):
         title = doc.get('dc:title', 'Untitled')
         year = doc.get('prism:coverDate', 'Unknown')
         print(f"[{i+1}] {title} ({year})")
@@ -94,6 +108,19 @@ def inspect_documents_by_name_and_affil(first, last, affil_targets=None, max_doc
         for a in authors:
             name = a.get('authname', 'Unknown')
             scopus_id = a.get('authid', 'N/A')
+            parts = name.split(',')
+            if len(parts) != 2:
+                print(f"  - [SKIP] Could not parse name: {name}")
+                continue
+            candidate_last = parts[0].strip()
+            candidate_first = parts[1].strip()
+            if candidate_last.lower() != last.lower():
+                print(f"  - [SKIP] Last name mismatch: {name}")
+                continue
+            if not name_fuzzy_match(first, candidate_first):
+                print(f"  - [SKIP] First name mismatch: {candidate_first} vs {first}")
+                continue
+
             affils = a.get('affiliation', [])
             if isinstance(affils, dict):
                 affils = [affils]
@@ -106,12 +133,12 @@ def inspect_documents_by_name_and_affil(first, last, affil_targets=None, max_doc
                 ]
                 affil_strs.append(", ".join([p for p in parts if p]))
             affil_block = " / ".join(affil_strs) if affil_strs else "No Affiliation Info"
+            match_note = ""
             if affil_targets:
                 for target in affil_targets:
                     if target.lower() in affil_block.lower():
-                        print(f"  - {name} (ID: {scopus_id})\n    Affiliation: {affil_block}")
-            else:
-                print(f"  - {name} (ID: {scopus_id})\n    Affiliation: {affil_block}")
+                        match_note = " [MATCHED AFFILIATION]"
+            print(f"  - {name} (ID: {scopus_id})\n    Affiliation: {affil_block}{match_note}")
         print("---")
 
 # === TEST CALL ===
@@ -119,7 +146,7 @@ inspect_documents_by_name_and_affil(
     first="FIRSTNAME",
     last="LASTNAME",
     affil_targets=["U1", "U2"],
-    max_docs=40
+    max_docs=200
 )
 
 
