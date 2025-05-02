@@ -48,10 +48,10 @@ print(f"Loaded {len(df)} authors from input file.")
 def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
-
-# === Cell 6b: Main processing loop with expanded search and debug ===
+# === Cell 6b: Main loop using Author Retrieval API (ENHANCED view) ===
 primary_output = []
 secondary_output = []
+max_candidates = 50  # throttle per row
 
 for idx, row in df.iterrows():
     first = str(row.get('first_name', '')).strip()
@@ -60,7 +60,6 @@ for idx, row in df.iterrows():
     if not first or not last:
         continue
 
-    # Expanded name variants
     name_queries = [
         f"AUTHLASTNAME({last}) AND AUTHFIRST({first} {middle})" if middle else f"AUTHLASTNAME({last}) AND AUTHFIRST({first})",
         f"AUTHLASTNAME({last}) AND AUTHFIRST({first[0]})" if first else ""
@@ -83,6 +82,8 @@ for idx, row in df.iterrows():
             if not entries:
                 break
             author_candidates.extend(entries)
+            if len(author_candidates) >= max_candidates:
+                break
             total = int(data['search-results']['opensearch:totalResults'])
             start += 25
             if start >= total:
@@ -100,69 +101,55 @@ for idx, row in df.iterrows():
 
     best_score = 0
     matched_author = None
-    matched_pubs = []
 
     for author in author_candidates:
         author_id = author.get('dc:identifier', '').split(':')[-1]
         full_name = f"{author.get('preferred-name', {}).get('given-name', '')} {author.get('preferred-name', {}).get('surname', '')}".strip()
-        logging.info(f"\nChecking author: {full_name} (ID: {author_id})")
+        logging.info(f"Checking author: {full_name} (ID: {author_id})")
 
-        pubs = []
-        start_pub = 0
-        total_pubs = 1
-        while start_pub < total_pubs:
-            params = {'query': f"AU-ID({author_id})", 'start': start_pub, 'count': 100, 'view': 'COMPLETE'}
-            resp = requests.get(SCOPUS_SEARCH_URL, headers=headers, params=params)
-            if resp.status_code != 200:
-                break
-            pub_page = resp.json()
-            entries = pub_page.get('search-results', {}).get('entry', [])
-            if not entries:
-                break
-            pubs.extend(entries)
-            total_pubs = int(pub_page['search-results']['opensearch:totalResults'])
-            start_pub += 100
-            time.sleep(1)
+        # Use Author Retrieval API
+        url = f"https://api.elsevier.com/content/author/{author_id}?view=ENHANCED"
+        resp = requests.get(url, headers=headers)
+        if resp.status_code != 200:
+            logging.warning(f"Failed to retrieve author {author_id}: {resp.status_code}")
+            continue
 
-        logging.info(f"Pulled {len(pubs)} publications.")
+        try:
+            aff_history = resp.json()['author-retrieval-response'][0]['author-profile']['affiliation-history']['affiliation']
+        except Exception as e:
+            logging.warning(f"No affiliation history for author {author_id}")
+            continue
+
+        if isinstance(aff_history, dict):
+            aff_history = [aff_history]
 
         score = 0
-        for pub in pubs:
-            pub_year = pub.get('prism:coverDate', '')[:4]
+        for aff in aff_history:
+            aff_name = aff.get('affil-name', '').lower()
+            aff_year = aff.get('start-date')
             try:
-                pub_year = int(pub_year)
+                aff_year = int(aff_year) if aff_year else None
             except:
-                continue
-
-            if 'author' not in pub:
-                continue
-
-            for auth in pub['author']:
-                if auth.get('authid') != author_id:
-                    continue
-                affils = auth.get('affiliation', [])
-                if isinstance(affils, dict):
-                    affils = [affils]
-                for affil in affils:
-                    name = affil.get('affilname', '').lower()
-                    for known_name, known_year in known_affils:
-                        if abs(pub_year - known_year) <= 6 and fuzzy_match(known_name, name):
-                            logging.info(f"Match found: '{known_name}' ~ '{name}' (Year: {pub_year})")
-                            score += 1
-                            break
+                aff_year = None
+            for known_name, known_year in known_affils:
+                if fuzzy_match(known_name, aff_name):
+                    if aff_year is None or abs(aff_year - known_year) <= 6:
+                        logging.info(f"Matched '{known_name}' ~ '{aff_name}' (aff year: {aff_year})")
+                        score += 1
+                        break
 
         logging.info(f"Score for {full_name} (ID {author_id}): {score}")
 
         if score > best_score:
             best_score = score
             matched_author = (author_id, full_name)
-            matched_pubs = pubs.copy()
 
     if not matched_author:
         logging.warning(f"No match found for {first} {last}")
         continue
 
     logging.info(f"Selected author: {matched_author[1]} (ID: {matched_author[0]})")
+
 
 # === Cell 7a: Process Primary Author Output ===
     for pub in matched_pubs:
