@@ -49,6 +49,56 @@ def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
 
+# === Cell 6bc-DOItoEIDInspect: Get authors and affiliations from a DOI ===
+
+def inspect_authors_from_doi(doi):
+    # Step 1: Find the EID from the DOI
+    search_url = "https://api.elsevier.com/content/search/scopus"
+    params = {
+        'query': f'DOI({doi})',
+        'count': 1
+    }
+    resp = requests.get(search_url, headers=headers, params=params)
+    if resp.status_code != 200:
+        print(f"Failed to retrieve EID from DOI. Status code: {resp.status_code}")
+        return
+
+    results = resp.json().get('search-results', {}).get('entry', [])
+    if not results:
+        print("No article found for this DOI.")
+        return
+
+    eid = results[0].get('eid')
+    print(f"Found EID: {eid}\n")
+
+    # Step 2: Retrieve abstract and list authors + affiliations
+    abstract_url = f"https://api.elsevier.com/content/abstract/eid/{eid}"
+    abstract_resp = requests.get(abstract_url, headers=headers)
+    if abstract_resp.status_code != 200:
+        print(f"Failed to retrieve abstract metadata. Status code: {abstract_resp.status_code}")
+        return
+
+    try:
+        author_list = abstract_resp.json()['abstracts-retrieval-response']['authors']['author']
+    except Exception:
+        print("No author metadata found in abstract.")
+        return
+
+    print("=== AUTHORS AND AFFILIATIONS ===")
+    for author in author_list:
+        name = f"{author.get('ce:given-name', '')} {author.get('ce:surname', '')}".strip()
+        scopus_id = author.get('@auid', 'N/A')
+        affil = author.get('affiliation', {})
+        affil_name = affil.get('affilname', 'N/A') if isinstance(affil, dict) else 'N/A'
+        affil_city = affil.get('affiliation-city', '') if isinstance(affil, dict) else ''
+        affil_country = affil.get('affiliation-country', '') if isinstance(affil, dict) else ''
+        location = ", ".join([x for x in [affil_name, affil_city, affil_country] if x])
+        print(f"- {name} (SCOPUS ID: {scopus_id})\n  Affiliation: {location if location else 'N/A'}\n")
+
+# === EXAMPLE USAGE ===
+inspect_authors_from_doi("10.1016/j.jclepro.2023.139200")
+
+
 # === Cell 6bz-DOCQUERY: Pull documents and paper-level affiliations for a SCOPUS ID ===
 
 def inspect_documents_by_author_id(scopus_id, max_docs=20):
