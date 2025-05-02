@@ -1,8 +1,11 @@
-# === Cell 6be-AUTHORSEARCH: Pull list of SCOPUS author profiles by name ===
+# === Cell 6be-AUTHORSEARCH: Pull list of SCOPUS author profiles by name + optional affiliation ===
 
-def search_scopus_authors_by_name(first, last, max_results=100):
+def search_scopus_authors_by_name(first, last, affil=None, max_results=100):
     base_url = "https://api.elsevier.com/content/search/author"
     query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
+    if affil:
+        query += f" AND AFFIL({affil})"
+
     params = {
         'query': query,
         'count': 25,
@@ -12,7 +15,7 @@ def search_scopus_authors_by_name(first, last, max_results=100):
     all_results = []
     seen_ids = set()
 
-    print(f"[API] Searching SCOPUS author profiles for: {first} {last}\n")
+    print(f"[API] Searching SCOPUS author profiles for: {first} {last}" + (f" with affiliation: {affil}" if affil else "") + "\n")
 
     while len(all_results) < max_results:
         resp = requests.get(base_url, headers=headers, params=params)
@@ -43,4 +46,4 @@ def search_scopus_authors_by_name(first, last, max_results=100):
         print(f"[{i}] {full_name} | SCOPUS ID: {scopus_id} | Affiliation: {affil}")
 
 # === TEST CALL ===
-search_scopus_authors_by_name(first="FIRST", last="LAST")
+search_scopus_authors_by_name(first="FIRSTNAME", last="LASTNAME", affil="U1")
