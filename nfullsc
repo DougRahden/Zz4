@@ -100,6 +100,10 @@ def run_test_case(first, last, affil_year_pairs):
             time.sleep(1)
 
     print(f"\n[Internal] Found {len(author_candidates)} SCOPUS candidates.")
+    for author in author_candidates:
+        author_id = author.get('dc:identifier', '').split(':')[-1]
+        full_name = f"{author.get('preferred-name', {}).get('given-name', '')} {author.get('preferred-name', {}).get('surname', '')}".strip()
+        print(f"  - {full_name} (ID: {author_id})")
 
     best_score = 0
     matched_author = None
@@ -109,8 +113,10 @@ def run_test_case(first, last, affil_year_pairs):
         author_id = author.get('dc:identifier', '').split(':')[-1]
         full_name = f"{author.get('preferred-name', {}).get('given-name', '')} {author.get('preferred-name', {}).get('surname', '')}".strip()
 
-        if not name_similarity(first, last, full_name):
+        passed_name_check = name_similarity(first, last, full_name)
+        if not passed_name_check:
             logging.info(f"[Internal] Skipping name mismatch: Input='{first} {last}' vs SCOPUS='{full_name}'")
+            candidate_scores.append((author_id, full_name, 0, 'Name mismatch'))
             continue
 
         logging.info(f"[API] Checking author: {full_name} (ID: {author_id})")
@@ -119,12 +125,14 @@ def run_test_case(first, last, affil_year_pairs):
         api_calls['author_retrieval'] += 1
         if resp.status_code != 200:
             logging.warning(f"[API] Failed to retrieve author {author_id}: {resp.status_code}")
+            candidate_scores.append((author_id, full_name, 0, f"Failed to retrieve ({resp.status_code})"))
             continue
 
         try:
             aff_history = resp.json()['author-retrieval-response'][0]['author-profile']['affiliation-history']['affiliation']
         except Exception as e:
             logging.warning(f"[Internal] No affiliation history for author {author_id}")
+            candidate_scores.append((author_id, full_name, 0, "No affiliation history"))
             continue
 
         if isinstance(aff_history, dict):
@@ -148,15 +156,15 @@ def run_test_case(first, last, affil_year_pairs):
                             matched_affils.add(known_name)
                             break
 
-        candidate_scores.append((author_id, full_name, score))
+        candidate_scores.append((author_id, full_name, score, "Matched" if score > 0 else "No matched affiliations"))
 
         if score > best_score:
             best_score = score
             matched_author = (author_id, full_name)
 
     print("\n=== CANDIDATE SCORES ===")
-    for scopus_id, name, score in candidate_scores:
-        print(f"{name} (ID: {scopus_id}) → Score: {score}")
+    for scopus_id, name, score, note in candidate_scores:
+        print(f"{name} (ID: {scopus_id}) → Score: {score} [{note}]")
 
     print("\n=== SCOPUS API CALL STATS ===")
     print(f"Author search queries: {api_calls['author_search']}")
