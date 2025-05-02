@@ -49,338 +49,60 @@ def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
 
-# === Cell 6bc-DOItoEIDInspect: Get authors and affiliations from a DOI with afid matching ===
+# === Cell 6b: Document-first disambiguation using SCOPUS metadata ===
 
-def inspect_authors_from_doi(doi):
-    # Step 1: Find the EID from the DOI
-    search_url = "https://api.elsevier.com/content/search/scopus"
-    params = {
-        'query': f'DOI({doi})',
-        'count': 1
-    }
-    resp = requests.get(search_url, headers=headers, params=params)
-    if resp.status_code != 200:
-        print(f"Failed to retrieve EID from DOI. Status code: {resp.status_code}")
-        return
+from collections import defaultdict
+from datetime import datetime
 
-    results = resp.json().get('search-results', {}).get('entry', [])
-    if not results:
-        print("No article found for this DOI.")
-        return
-
-    eid = results[0].get('eid')
-    print(f"Found EID: {eid}\n")
-
-    # Step 2: Retrieve abstract and list authors + affiliations
-    abstract_url = f"https://api.elsevier.com/content/abstract/eid/{eid}"
-    abstract_resp = requests.get(abstract_url, headers=headers)
-    if abstract_resp.status_code != 200:
-        print(f"Failed to retrieve abstract metadata. Status code: {abstract_resp.status_code}")
-        return
-
-    try:
-        response_json = abstract_resp.json()['abstracts-retrieval-response']
-        author_list = response_json['authors']['author']
-        affil_list = response_json.get('affiliation', [])
-        if isinstance(affil_list, dict):
-            affil_list = [affil_list]
-    except Exception:
-        print("No author or affiliation metadata found in abstract.")
-        return
-
-    # Build afid lookup
-    afid_lookup = {}
-    for aff in affil_list:
-        afid_lookup[aff.get('@id')] = {
-            'affilname': aff.get('affilname', ''),
-            'city': aff.get('affiliation-city', ''),
-            'country': aff.get('affiliation-country', '')
-        }
-
-    print("=== AUTHORS AND AFFILIATIONS (via afid matching) ===")
-    for author in author_list:
-        name = f"{author.get('ce:given-name', '')} {author.get('ce:surname', '')}".strip()
-        scopus_id = author.get('@auid', 'N/A')
-        affil = author.get('affiliation', {})
-        afid = affil.get('@id') if isinstance(affil, dict) else None
-
-        if afid and afid in afid_lookup:
-            aff = afid_lookup[afid]
-            location = ", ".join([x for x in [aff['affilname'], aff['city'], aff['country']] if x])
-        else:
-            location = "N/A"
-
-        print(f"- {name} (SCOPUS ID: {scopus_id})\n  Affiliation: {location}\n")
-
-# === EXAMPLE USAGE ===
-inspect_authors_from_doi("10.1016/j.jclepro.2023.139200")
-
-
-# === Cell 6bz-DOCQUERY: Pull documents and paper-level affiliations for a SCOPUS ID ===
-
-def inspect_documents_by_author_id(scopus_id, max_docs=20):
-    base_url = "https://api.elsevier.com/content/search/scopus"
-    params = {
-        'query': f"AU-ID({scopus_id})",
-        'view': 'COMPLETE',
-        'count': 25,
-        'start': 0
-    }
-
-    docs = []
-    while len(docs) < max_docs:
-        resp = requests.get(base_url, headers=headers, params=params)
-        if resp.status_code != 200:
-            print(f"Error: {resp.status_code}")
-            return
-
-        page = resp.json().get('search-results', {})
-        entries = page.get('entry', [])
-        if not entries:
-            break
-
-        docs.extend(entries)
-        params['start'] += 25
-        if len(docs) >= int(page.get('opensearch:totalResults', 0)):
-            break
-        time.sleep(1)
-
-    print(f"\nRetrieved {len(docs)} documents for SCOPUS ID {scopus_id}\n")
-    for i, doc in enumerate(docs):
-        print(f"[{i+1}] {doc.get('dc:title', 'Untitled')} ({doc.get('prism:coverDate', 'No Date')})")
-        if 'author' in doc:
-            for a in doc['author']:
-                name = a.get('authname', 'Unknown')
-                affils = a.get('affiliation', [])
-                if isinstance(affils, dict):
-                    affils = [affils]
-                affil_strs = []
-                for aff in affils:
-                    parts = [
-                        aff.get('affilname'),
-                        aff.get('affiliation-city'),
-                        aff.get('affiliation-country')
-                    ]
-                    affil_strs.append(", ".join([p for p in parts if p]))
-                joined = " / ".join(affil_strs) if affil_strs else "No Affiliation Info"
-                print(f"   - {name}: {joined}")
-        print("---")
-
-# === EXAMPLE USAGE ===
-inspect_documents_by_author_id("57225158196")
-
-
-# === Cell 6by-IDTEST: Inspect SCOPUS author metadata by SCOPUS ID ===
-
-def inspect_scopus_author_by_id(scopus_id):
-    url = f"https://api.elsevier.com/content/author/author_id/{scopus_id}?view=ENHANCED"
-    resp = requests.get(url, headers=headers)
-    print(f"Status code: {resp.status_code}\n")
-
-    if resp.status_code != 200:
-        print("Error retrieving author.")
-        return
-
-    try:
-        data = resp.json()['author-retrieval-response'][0]
-    except Exception as e:
-        print("Error parsing JSON response.")
-        return
-
-    print("=== BASIC INFO ===")
-    name = data.get('preferred-name', {})
-    print(f"Full Name: {name.get('given-name', '')} {name.get('surname', '')}")
-    print(f"SCOPUS ID: {scopus_id}")
-    print(f"ORCID: {data.get('orcid', 'N/A')}")
-    print(f"Document Count: {data.get('coredata', {}).get('document-count', 'N/A')}")
-    print(f"Affiliation Current: {data.get('affiliation-current', {}).get('affiliation-name', 'N/A')}")
-
-    print("\n=== SUBJECT AREAS ===")
-    areas = data.get('subject-area', [])
-    if isinstance(areas, dict): areas = [areas]
-    for a in areas:
-        print(f"- {a.get('area', '')} ({a.get('abbrev', '')})")
-
-    print("\n=== AFFILIATION HISTORY ===")
-    history = data.get('author-profile', {}).get('affiliation-history', {}).get('affiliation', [])
-    if isinstance(history, dict): history = [history]
-    for aff in history:
-        parts = [
-            aff.get('affil-name', ''),
-            aff.get('affiliation-city', ''),
-            aff.get('affiliation-country', ''),
-            aff.get('start-date', '')
-        ]
-        print("- " + ", ".join([p for p in parts if p]))
-
-# === EXAMPLE USAGE ===
-inspect_scopus_author_by_id("57225158196")
-
-
-# === Cell 6bx-TEST: Debug test for a single author match ===
-
-max_candidates = 50
-api_calls = {'author_search': 0, 'author_retrieval': 0}
-
-def name_similarity(input_first, input_last, candidate_fullname):
-    parts = candidate_fullname.lower().split()
-    if len(parts) < 2:
-        return False
-    candidate_first = parts[0]
-    candidate_last = parts[-1]
-    return (
-        candidate_last == input_last.lower() and
-        levenshtein_ratio(input_first.lower(), candidate_first) > 0.8
-    )
-
-def fuzzy_match(a, b):
-    a, b = a.lower(), b.lower()
-    return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
-
-def run_test_case(first, last, affil_year_pairs):
-    name_queries = [
-        f"AUTHLASTNAME({last}) AND AUTHFIRST({first})",
-        f"AUTHLASTNAME({last}) AND AUTHFIRST({first[0]})"
-    ]
-
-    author_candidates = []
-    for name_query in name_queries:
-        logging.info(f"[API] Querying SCOPUS: {name_query}")
-        start = 0
-        while True:
-            params = {'query': name_query, 'start': start, 'count': 25}
-            resp = requests.get(AUTHOR_SEARCH_URL, headers=headers, params=params)
-            api_calls['author_search'] += 1
-            if resp.status_code != 200:
-                logging.error(f"[API] Author search failed: {resp.status_code}")
-                break
-            data = resp.json()
-            entries = data.get('search-results', {}).get('entry', [])
-            if not entries:
-                break
-            author_candidates.extend(entries)
-            if len(author_candidates) >= max_candidates:
-                break
-            total = int(data['search-results']['opensearch:totalResults'])
-            start += 25
-            if start >= total:
-                break
-            time.sleep(1)
-
-    print(f"\n[Internal] Found {len(author_candidates)} SCOPUS candidates.")
-    for author in author_candidates:
-        author_id = author.get('dc:identifier', '').split(':')[-1]
-        full_name = f"{author.get('preferred-name', {}).get('given-name', '')} {author.get('preferred-name', {}).get('surname', '')}".strip()
-        print(f"  - {full_name} (ID: {author_id})")
-
-    best_score = 0
-    matched_author = None
-    candidate_scores = []
-
-    for author in author_candidates:
-        author_id = author.get('dc:identifier', '').split(':')[-1]
-        full_name = f"{author.get('preferred-name', {}).get('given-name', '')} {author.get('preferred-name', {}).get('surname', '')}".strip()
-
-        passed_name_check = name_similarity(first, last, full_name)
-        if not passed_name_check:
-            logging.info(f"[Internal] Skipping name mismatch: Input='{first} {last}' vs SCOPUS='{full_name}'")
-            candidate_scores.append((author_id, full_name, 0, 'Name mismatch'))
-            continue
-
-        logging.info(f"[API] Checking author: {full_name} (ID: {author_id})")
-        url = f"https://api.elsevier.com/content/author/author_id/{author_id}?view=ENHANCED"
-        resp = requests.get(url, headers=headers)
-        api_calls['author_retrieval'] += 1
-        if resp.status_code != 200:
-            logging.warning(f"[API] Failed to retrieve author {author_id}: {resp.status_code}")
-            candidate_scores.append((author_id, full_name, 0, f"Failed to retrieve ({resp.status_code})"))
-            continue
-
-        try:
-            aff_history = resp.json()['author-retrieval-response'][0]['author-profile']['affiliation-history']['affiliation']
-        except Exception as e:
-            logging.warning(f"[Internal] No affiliation history for author {author_id}")
-            candidate_scores.append((author_id, full_name, 0, "No affiliation history"))
-            continue
-
-        if isinstance(aff_history, dict):
-            aff_history = [aff_history]
-
-        score = 0
-        matched_affils = set()
-        for known_name, known_year in affil_year_pairs:
-            for aff in aff_history:
-                aff_name = aff.get('affil-name', '').lower()
-                aff_year = aff.get('start-date')
-                try:
-                    aff_year = int(aff_year) if aff_year else None
-                except:
-                    aff_year = None
-                if fuzzy_match(known_name.lower(), aff_name):
-                    if aff_year is None or abs(aff_year - known_year) <= 6:
-                        if known_name not in matched_affils:
-                            logging.info(f"[Internal] Matched '{known_name}' ~ '{aff_name}' (aff year: {aff_year})")
-                            score += 1
-                            matched_affils.add(known_name)
-                            break
-
-        candidate_scores.append((author_id, full_name, score, "Matched" if score > 0 else "No matched affiliations"))
-
-        if score > best_score:
-            best_score = score
-            matched_author = (author_id, full_name)
-
-    print("\n=== CANDIDATE SCORES ===")
-    for scopus_id, name, score, note in candidate_scores:
-        print(f"{name} (ID: {scopus_id}) → Score: {score} [{note}]")
-
-    print("\n=== SCOPUS API CALL STATS ===")
-    print(f"Author search queries: {api_calls['author_search']}")
-    print(f"Author retrieval calls: {api_calls['author_retrieval']}")
-
-    if matched_author:
-        print("\n=== BEST MATCH ===")
-        print(f"Author: {matched_author[1]}")
-        print(f"SCOPUS ID: {matched_author[0]}")
-        print(f"Score: {best_score}")
-    else:
-        print("\n[Internal] No matching author found.")
-
-# === TEST CALL ===
-run_test_case(
-    first="FIRSTNAMEHERE",
-    last="LASTNAMEHERE",
-    affil_year_pairs=[
-        ("U1", YYYY),
-        ("U2", YYYY)
-    ]
-)
-
-
-# === Cell 6b: Main loop using Author Retrieval API (ENHANCED view, with name matching, API tracking, and result summary) ===
 primary_output = []
 secondary_output = []
-max_candidates = 50  # throttle per row
+summary_log = []
+api_calls = {'doc_search': 0, 'doc_retrieve': 0}
 
-results = []  # to hold all final matched authors and their publications
-summary_log = []  # collect summary info per person
+max_docs_per_name = 100
+max_docs_per_page = 25
+fuzzy_name_threshold = 0.85
 
-def name_similarity(input_first, input_last, candidate_fullname):
-    parts = candidate_fullname.lower().split()
-    if len(parts) < 2:
-        return False
-    candidate_first = parts[0]
-    candidate_last = parts[-1]
-    return (
-        candidate_last == input_last.lower() and
-        levenshtein_ratio(input_first.lower(), candidate_first) > 0.8
-    )
+def name_fuzzy_match(first_target, first_candidate):
+    return levenshtein_ratio(first_target.lower(), first_candidate.lower()) >= fuzzy_name_threshold or \
+           first_target.lower().startswith(first_candidate.lower()) or \
+           first_candidate.lower().startswith(first_target.lower())
 
-# === Track API call counts ===
-api_calls = {
-    'author_search': 0,
-    'author_retrieval': 0
-}
+def search_documents_by_name(first, last):
+    base_url = "https://api.elsevier.com/content/search/scopus"
+    query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
+    params = {
+        'query': query,
+        'count': max_docs_per_page,
+        'start': 0,
+        'sort': 'coverDate:desc',
+        'view': 'COMPLETE'
+    }
+    docs = []
+    while len(docs) < max_docs_per_name:
+        resp = requests.get(base_url, headers=headers, params=params)
+        api_calls['doc_search'] += 1
+        if resp.status_code != 200:
+            logging.warning(f"[API] Failed doc search for {first} {last}, status: {resp.status_code}")
+            break
+        entries = resp.json().get('search-results', {}).get('entry', [])
+        if not entries:
+            break
+        docs.extend(entries)
+        params['start'] += max_docs_per_page
+        if len(entries) < max_docs_per_page:
+            break
+        time.sleep(1)
+    return docs
+
+def extract_publication_year(entry):
+    date = entry.get('prism:coverDate')
+    if not date:
+        return None
+    try:
+        return int(date[:4])
+    except:
+        return None
 
 for idx, row in df.iterrows():
     first = str(row.get('first_name', '')).strip()
@@ -388,40 +110,8 @@ for idx, row in df.iterrows():
     last = str(row.get('last_name', '')).strip()
     if not first or not last:
         continue
-
-    excel_name = f"{first} {middle} {last}".strip()
-    name_queries = [
-        f"AUTHLASTNAME({last}) AND AUTHFIRST({first} {middle})" if middle else f"AUTHLASTNAME({last}) AND AUTHFIRST({first})",
-        f"AUTHLASTNAME({last}) AND AUTHFIRST({first[0]})" if first else ""
-    ]
-
-    author_candidates = []
-    for name_query in name_queries:
-        if not name_query:
-            continue
-        logging.info(f"[API] Querying SCOPUS: {name_query}")
-        start = 0
-        while True:
-            params = {'query': name_query, 'start': start, 'count': 25}
-            resp = requests.get(AUTHOR_SEARCH_URL, headers=headers, params=params)
-            api_calls['author_search'] += 1
-            if resp.status_code != 200:
-                logging.error(f"[API] Author search failed: {resp.status_code}")
-                break
-            data = resp.json()
-            entries = data.get('search-results', {}).get('entry', [])
-            if not entries:
-                break
-            author_candidates.extend(entries)
-            if len(author_candidates) >= max_candidates:
-                break
-            total = int(data['search-results']['opensearch:totalResults'])
-            start += 25
-            if start >= total:
-                break
-            time.sleep(1)
-
-    logging.info(f"[Internal] Found {len(author_candidates)} author candidates.")
+    full_first = f"{first} {middle}".strip()
+    excel_name = f"{full_first} {last}".strip()
 
     known_affils = []
     for i in range(1, 5):
@@ -430,92 +120,95 @@ for idx, row in df.iterrows():
         if aff and pd.notna(year):
             known_affils.append((aff.lower(), int(year)))
 
-    best_score = 0
-    matched_author = None
-    matched_pubs = []
+    docs = search_documents_by_name(full_first, last)
+    author_scores = defaultdict(lambda: {'score': 0, 'name': '', 'matched_docs': []})
 
-    for author in author_candidates:
-        author_id = author.get('dc:identifier', '').split(':')[-1]
-        full_name = f"{author.get('preferred-name', {}).get('given-name', '')} {author.get('preferred-name', {}).get('surname', '')}".strip()
-
-        if not name_similarity(first, last, full_name):
-            logging.info(f"[Internal] Skipping name mismatch: Excel='{first} {last}' vs SCOPUS='{full_name}'")
+    for doc in docs:
+        pub_year = extract_publication_year(doc)
+        eid = doc.get('eid')
+        title = doc.get('dc:title', 'Untitled')
+        authors = doc.get('author', [])
+        if not isinstance(authors, list):
             continue
 
-        logging.info(f"[API] Checking author: {full_name} (ID: {author_id})")
-        url = f"https://api.elsevier.com/content/author/author_id/{author_id}?view=ENHANCED"
-        resp = requests.get(url, headers=headers)
-        api_calls['author_retrieval'] += 1
-        if resp.status_code != 200:
-            logging.warning(f"[API] Failed to retrieve author {author_id}: {resp.status_code}")
-            continue
+        for author in authors:
+            candidate_id = author.get('authid', 'N/A')
+            candidate_name = author.get('authname', 'Unknown')
+            parts = candidate_name.split(',')
+            if len(parts) != 2:
+                continue
+            candidate_last = parts[0].strip()
+            candidate_first = parts[1].strip()
+            if candidate_last.lower() != last.lower():
+                continue
+            if not name_fuzzy_match(first, candidate_first):
+                continue
 
-        try:
-            aff_history = resp.json()['author-retrieval-response'][0]['author-profile']['affiliation-history']['affiliation']
-        except Exception as e:
-            logging.warning(f"[Internal] No affiliation history for author {author_id}")
-            continue
+            affils = author.get('affiliation', [])
+            if isinstance(affils, dict):
+                affils = [affils]
 
-        if isinstance(aff_history, dict):
-            aff_history = [aff_history]
+            for aff in affils:
+                aff_name = aff.get('affilname', '').lower()
+                aff_city = aff.get('affiliation-city', '')
+                aff_country = aff.get('affiliation-country', '')
+                for known_affil, known_year in known_affils:
+                    if fuzzy_match(known_affil, aff_name):
+                        if pub_year is None or abs(pub_year - known_year) <= 6:
+                            author_scores[candidate_id]['score'] += 1
+                            author_scores[candidate_id]['name'] = f"{candidate_first} {candidate_last}"
+                            author_scores[candidate_id]['matched_docs'].append({
+                                'title': title,
+                                'eid': eid,
+                                'year': pub_year,
+                                'affiliation': f"{aff_name}, {aff_city}, {aff_country}"
+                            })
 
-        score = 0
-        matched_affils = set()
-        for known_name, known_year in known_affils:
-            for aff in aff_history:
-                aff_name = aff.get('affil-name', '').lower()
-                aff_year = aff.get('start-date')
-                try:
-                    aff_year = int(aff_year) if aff_year else None
-                except:
-                    aff_year = None
-                if fuzzy_match(known_name, aff_name):
-                    if aff_year is None or abs(aff_year - known_year) <= 6:
-                        if known_name not in matched_affils:
-                            logging.info(f"[Internal] Matched '{known_name}' ~ '{aff_name}' (aff year: {aff_year})")
-                            score += 1
-                            matched_affils.add(known_name)
-                            break
-
-        logging.info(f"[Internal] Score for {full_name} (ID {author_id}): {score}")
-
-        if score > best_score:
-            best_score = score
-            matched_author = (author_id, full_name)
-            matched_pubs = []  # optional: include this if needed later
-
-    if matched_author:
-        logging.info(f"[Internal] Selected author: {matched_author[1]} (ID: {matched_author[0]})")
+    if not author_scores:
+        logging.warning(f"[Internal] No matched SCOPUS ID for {excel_name}")
         summary_log.append({
             'input_name': excel_name,
-            'candidate_count': len(author_candidates),
-            'selected_author': matched_author[1],
-            'scopus_id': matched_author[0]
+            'matched_scopus_id': None,
+            'score': 0,
+            'docs_scanned': len(docs)
         })
-        results.append({
-            'author_id': matched_author[0],
-            'author_name': matched_author[1],
-            'publications': matched_pubs
-        })
-    else:
-        summary_log.append({
-            'input_name': excel_name,
-            'candidate_count': len(author_candidates),
-            'selected_author': None,
-            'scopus_id': None
-        })
+        continue
 
-# === Summary output ===
+    best_id, best_data = max(author_scores.items(), key=lambda x: x[1]['score'])
+    summary_log.append({
+        'input_name': excel_name,
+        'matched_scopus_id': best_id,
+        'score': best_data['score'],
+        'docs_scanned': len(docs)
+    })
+
+    for d in best_data['matched_docs']:
+        primary_output.append([best_data['name'], best_id, d['title'], d['affiliation'], d['year']])
+
+        for author in doc.get('author', []):
+            if author.get('authid') == best_id:
+                continue
+            co_name = author.get('authname', 'Unknown')
+            co_id = author.get('authid', 'N/A')
+            co_affils = author.get('affiliation', [])
+            if isinstance(co_affils, dict):
+                co_affils = [co_affils]
+            affil_parts = []
+            for aff in co_affils:
+                parts = [aff.get('affilname'), aff.get('affiliation-city'), aff.get('affiliation-country')]
+                affil_parts.append(", ".join([p for p in parts if p]))
+            affil_str = " / ".join(affil_parts) if affil_parts else "N/A"
+            secondary_output.append([co_name, co_id, best_data['name'], d['title'], affil_str])
+
+# === Print Summary ===
 print("\n=== SCOPUS API CALL STATS ===")
-print(f"Author search queries: {api_calls['author_search']}")
-print(f"Author retrieval calls: {api_calls['author_retrieval']}")
+print(f"Document search calls: {api_calls['doc_search']}")
 
-print("\n=== PER-INPUT AUTHOR SUMMARY ===")
+print("\n=== MATCH SUMMARY ===")
 for entry in summary_log:
     print(f"Input: {entry['input_name']}")
-    print(f"  Candidates Found: {entry['candidate_count']}")
-    print(f"  Selected Author: {entry['selected_author'] or 'None'}")
-    print(f"  SCOPUS ID: {entry['scopus_id'] or 'None'}")
+    print(f"  Matched SCOPUS ID: {entry['matched_scopus_id'] or 'None'}")
+    print(f"  Score: {entry['score']} | Docs scanned: {entry['docs_scanned']}")
     print("---")
 
 
