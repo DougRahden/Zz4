@@ -1,0 +1,46 @@
+# === Cell 6be-AUTHORSEARCH: Pull list of SCOPUS author profiles by name ===
+
+def search_scopus_authors_by_name(first, last, max_results=100):
+    base_url = "https://api.elsevier.com/content/search/author"
+    query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
+    params = {
+        'query': query,
+        'count': 25,
+        'start': 0
+    }
+
+    all_results = []
+    seen_ids = set()
+
+    print(f"[API] Searching SCOPUS author profiles for: {first} {last}\n")
+
+    while len(all_results) < max_results:
+        resp = requests.get(base_url, headers=headers, params=params)
+        if resp.status_code != 200:
+            print(f"Error: {resp.status_code}")
+            break
+
+        entries = resp.json().get('search-results', {}).get('entry', [])
+        if not entries:
+            break
+
+        for entry in entries:
+            scopus_id = entry.get('dc:identifier', '').split(':')[-1]
+            name_data = entry.get('preferred-name', {})
+            full_name = f"{name_data.get('given-name', '')} {name_data.get('surname', '')}".strip()
+            current_affil = entry.get('affiliation-current', {}).get('affiliation-name', 'N/A')
+            if scopus_id not in seen_ids:
+                all_results.append((scopus_id, full_name, current_affil))
+                seen_ids.add(scopus_id)
+
+        params['start'] += 25
+        if len(entries) < 25:
+            break
+        time.sleep(1)
+
+    print(f"Found {len(all_results)} SCOPUS author profiles:\n")
+    for i, (scopus_id, full_name, affil) in enumerate(all_results, 1):
+        print(f"[{i}] {full_name} | SCOPUS ID: {scopus_id} | Affiliation: {affil}")
+
+# === TEST CALL ===
+search_scopus_authors_by_name(first="FIRST", last="LAST")
