@@ -1,0 +1,143 @@
+# === Cell 6b: Final production pipeline — author search → affiliation match → documents → coauthors ===
+
+from collections import defaultdict
+
+primary_output = []
+secondary_output = []
+summary_log = []
+api_calls = {'author_search': 0, 'doc_search': 0, 'abstract_retrieval': 0}
+
+max_docs_per_author = 100
+fuzzy_affil_threshold = 0.8
+
+def fuzzy_match(a, b):
+    a, b = a.lower(), b.lower()
+    return levenshtein_ratio(a, b) >= fuzzy_affil_threshold or a in b or b in a
+
+def search_scopus_authors(first, last):
+    query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
+    url = "https://api.elsevier.com/content/search/author"
+    params = {'query': query, 'count': 25, 'start': 0}
+    authors = []
+    while True:
+        resp = requests.get(url, headers=headers, params=params)
+        api_calls['author_search'] += 1
+        if resp.status_code != 200:
+            break
+        entries = resp.json().get('search-results', {}).get('entry', [])
+        for entry in entries:
+            scopus_id = entry.get('dc:identifier', '').split(':')[-1]
+            name_data = entry.get('preferred-name', {})
+            full_name = f"{name_data.get('given-name', '')} {name_data.get('surname', '')}".strip()
+            affil = entry.get('affiliation-current', {}).get('affiliation-name', '')
+            authors.append((scopus_id, full_name, affil))
+        if len(entries) < 25:
+            break
+        params['start'] += 25
+        time.sleep(1)
+    return authors
+
+def pull_documents_by_auid(scopus_id):
+    url = "https://api.elsevier.com/content/search/scopus"
+    docs = []
+    params = {
+        'query': f"AU-ID({scopus_id})",
+        'count': 25,
+        'start': 0,
+        'view': 'COMPLETE',
+        'sort': 'coverDate:desc'
+    }
+    while len(docs) < max_docs_per_author:
+        resp = requests.get(url, headers=headers, params=params)
+        api_calls['doc_search'] += 1
+        if resp.status_code != 200:
+            break
+        entries = resp.json().get('search-results', {}).get('entry', [])
+        if not entries:
+            break
+        docs.extend(entries)
+        params['start'] += 25
+        if len(entries) < 25:
+            break
+        time.sleep(1)
+    return docs
+
+def get_authors_from_eid(eid):
+    url = f"https://api.elsevier.com/content/abstract/eid/{eid}"
+    resp = requests.get(url, headers=headers)
+    api_calls['abstract_retrieval'] += 1
+    if resp.status_code != 200:
+        return []
+    try:
+        data = resp.json()['abstracts-retrieval-response']
+        authors = data['authors']['author']
+        affils = data.get('affiliation', [])
+        if isinstance(affils, dict):
+            affils = [affils]
+        affil_lookup = {a.get('@id'): a for a in affils}
+        return [
+            {
+                'name': f"{a.get('ce:given-name', '')} {a.get('ce:surname', '')}".strip(),
+                'id': a.get('@auid', 'N/A'),
+                'affiliation': affil_lookup.get(
+                    a.get('affiliation', {}).get('@id'), {}).get('affilname', 'N/A')
+            } for a in authors
+        ]
+    except:
+        return []
+
+for idx, row in df.iterrows():
+    first = str(row.get('first_name', '')).strip()
+    last = str(row.get('last_name', '')).strip()
+    if not first or not last:
+        continue
+    excel_name = f"{first} {last}"
+    logging.info(f"[START] Processing {excel_name}")
+
+    known_affils = []
+    for i in range(1, 5):
+        aff = str(row.get(f'affiliation_{i}', '')).strip()
+        if aff:
+            known_affils.append(aff.lower())
+
+    candidates = search_scopus_authors(first, last)
+    best_match = None
+    for scopus_id, full_name, current_affil in candidates:
+        for target in known_affils:
+            if fuzzy_match(current_affil, target):
+                best_match = (scopus_id, full_name, current_affil)
+                break
+        if best_match:
+            break
+
+    if not best_match:
+        summary_log.append({'input': excel_name, 'scopus_id': None, 'matched_affil': None, 'docs': 0})
+        logging.warning(f"[MISS] No SCOPUS ID match for {excel_name}")
+        continue
+
+    scopus_id, matched_name, matched_affil = best_match
+    logging.info(f"[MATCH] {matched_name} (ID: {scopus_id}) | Affil: {matched_affil}")
+
+    docs = pull_documents_by_auid(scopus_id)
+    summary_log.append({'input': excel_name, 'scopus_id': scopus_id, 'matched_affil': matched_affil, 'docs': len(docs)})
+
+    for doc in docs:
+        title = doc.get('dc:title', 'Untitled')
+        year = doc.get('prism:coverDate', 'Unknown')
+        eid = doc.get('eid')
+        primary_output.append([matched_name, scopus_id, title, matched_affil, year])
+
+        coauthors = get_authors_from_eid(eid)
+        for co in coauthors:
+            if co['id'] == scopus_id:
+                continue
+            secondary_output.append([co['name'], co['id'], matched_name, title, co['affiliation']])
+
+# === Summary ===
+print("\n=== API CALL STATS ===")
+for k, v in api_calls.items():
+    print(f"{k}: {v}")
+
+print("\n=== SUMMARY ===")
+for entry in summary_log:
+    print(f"Input: {entry['input']} | SCOPUS ID: {entry['scopus_id'] or 'None'} | Affil: {entry['matched_affil'] or 'N/A'} | Docs: {entry['docs']}")
