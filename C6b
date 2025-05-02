@@ -1,4 +1,4 @@
-# === Cell 6b: Final production pipeline — tighter fuzzy matching + document loop stability ===
+# === Cell 6b: Prioritize exact match first, then fallback to fuzzy with affiliation priority ===
 
 from collections import defaultdict
 
@@ -8,11 +8,17 @@ summary_log = []
 api_calls = {'author_search': 0, 'doc_search': 0, 'abstract_retrieval': 0}
 
 max_docs_per_author = 100
-fuzzy_affil_threshold = 0.9  # tightened to avoid false positives
+fuzzy_affil_threshold = 0.9
+ignore_tokens = ["university", "college", "institute", "laboratory", "school", "of", "the", "and", "&", "center"]
 
-def fuzzy_match(a, b):
-    a, b = a.lower(), b.lower()
-    return levenshtein_ratio(a, b) >= fuzzy_affil_threshold or a in b or b in a
+def clean_for_matching(text):
+    words = [w for w in text.lower().split() if w not in ignore_tokens]
+    return " ".join(words)
+
+def fuzzy_match_cleaned(a, b):
+    a_clean = clean_for_matching(a)
+    b_clean = clean_for_matching(b)
+    return levenshtein_ratio(a_clean, b_clean) >= fuzzy_affil_threshold or a_clean in b_clean or b_clean in a_clean
 
 def search_scopus_authors(first, last):
     query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
@@ -111,19 +117,25 @@ for idx, row in df.iterrows():
     for i in range(1, 5):
         aff = str(row.get(f'affiliation_{i}', '')).strip()
         if aff:
-            known_affils.append(aff.lower())
+            known_affils.append((aff.lower(), i))  # store priority index
 
     candidates = search_scopus_authors(first, last)
     best_match = None
+    best_priority = float('inf')
     for scopus_id, full_name, current_affil in candidates:
         print(f"  → Candidate: {full_name} (ID: {scopus_id}) | Affil: {current_affil}")
-        for target in known_affils:
-            if current_affil != 'N/A' and fuzzy_match(current_affil, target):
-                print(f"    [MATCH] Fuzzy match to '{target}'")
+        for affil, priority in known_affils:
+            if current_affil != 'N/A' and current_affil.lower() == affil:
                 best_match = (scopus_id, full_name, current_affil)
+                best_priority = -1  # exact match wins
+                print(f"    [EXACT MATCH] '{current_affil}' == '{affil}'")
                 break
-        if best_match:
-            break
+            elif current_affil != 'N/A' and fuzzy_match_cleaned(current_affil, affil):
+                if best_priority > priority:
+                    best_match = (scopus_id, full_name, current_affil)
+                    best_priority = priority
+                    print(f"    [FUZZY MATCH] Fuzzy match to '{affil}' (priority {priority})")
+                break
 
     if not best_match:
         summary_log.append({'input': excel_name, 'scopus_id': None, 'matched_affil': None, 'docs': 0})
