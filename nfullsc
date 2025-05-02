@@ -49,7 +49,7 @@ def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
 
-# === Cell 6b: Document-first disambiguation using SCOPUS metadata ===
+# === Cell 6b: Final document-first SCOPUS disambiguation (middle name removed, DOI-style logic replicated) ===
 
 from collections import defaultdict
 from datetime import datetime
@@ -57,7 +57,7 @@ from datetime import datetime
 primary_output = []
 secondary_output = []
 summary_log = []
-api_calls = {'doc_search': 0, 'doc_retrieve': 0}
+api_calls = {'doc_search': 0}
 
 max_docs_per_name = 100
 max_docs_per_page = 25
@@ -80,6 +80,7 @@ def search_documents_by_name(first, last):
     }
     docs = []
     while len(docs) < max_docs_per_name:
+        logging.info(f"[API] Querying SCOPUS for {first} {last} starting at {params['start']}")
         resp = requests.get(base_url, headers=headers, params=params)
         api_calls['doc_search'] += 1
         if resp.status_code != 200:
@@ -93,6 +94,7 @@ def search_documents_by_name(first, last):
         if len(entries) < max_docs_per_page:
             break
         time.sleep(1)
+    logging.info(f"[Internal] Retrieved {len(docs)} documents for {first} {last}")
     return docs
 
 def extract_publication_year(entry):
@@ -106,12 +108,11 @@ def extract_publication_year(entry):
 
 for idx, row in df.iterrows():
     first = str(row.get('first_name', '')).strip()
-    middle = str(row.get('middle_name', '')).strip()
     last = str(row.get('last_name', '')).strip()
     if not first or not last:
         continue
-    full_first = f"{first} {middle}".strip()
-    excel_name = f"{full_first} {last}".strip()
+    excel_name = f"{first} {last}"
+    logging.info(f"\n[Internal] Processing: {excel_name}")
 
     known_affils = []
     for i in range(1, 5):
@@ -120,7 +121,7 @@ for idx, row in df.iterrows():
         if aff and pd.notna(year):
             known_affils.append((aff.lower(), int(year)))
 
-    docs = search_documents_by_name(full_first, last)
+    docs = search_documents_by_name(first, last)
     author_scores = defaultdict(lambda: {'score': 0, 'name': '', 'matched_docs': []})
 
     for doc in docs:
@@ -142,6 +143,7 @@ for idx, row in df.iterrows():
             if candidate_last.lower() != last.lower():
                 continue
             if not name_fuzzy_match(first, candidate_first):
+                logging.info(f"[Internal] Skipping name mismatch: Excel='{first} {last}' vs Candidate='{candidate_first} {candidate_last}'")
                 continue
 
             affils = author.get('affiliation', [])
@@ -155,6 +157,7 @@ for idx, row in df.iterrows():
                 for known_affil, known_year in known_affils:
                     if fuzzy_match(known_affil, aff_name):
                         if pub_year is None or abs(pub_year - known_year) <= 6:
+                            logging.info(f"[Internal] Matched author {candidate_first} {candidate_last} with '{aff_name}' ({pub_year})")
                             author_scores[candidate_id]['score'] += 1
                             author_scores[candidate_id]['name'] = f"{candidate_first} {candidate_last}"
                             author_scores[candidate_id]['matched_docs'].append({
@@ -175,6 +178,8 @@ for idx, row in df.iterrows():
         continue
 
     best_id, best_data = max(author_scores.items(), key=lambda x: x[1]['score'])
+    logging.info(f"[Internal] Selected SCOPUS ID {best_id} with score {best_data['score']}")
+
     summary_log.append({
         'input_name': excel_name,
         'matched_scopus_id': best_id,
