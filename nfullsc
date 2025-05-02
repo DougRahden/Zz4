@@ -29,9 +29,15 @@ test_params = {
     'query': 'AUTHLASTNAME(Einstein) AND AUTHFIRST(Albert)',
     'count': 1
 }
+
 test_resp = requests.get(AUTHOR_SEARCH_URL, headers=headers, params=test_params)
 print("Test Status Code:", test_resp.status_code)
-print("Test Response Snippet:", test_resp.text[:300])
+
+# Show a short snippet of the response content (optional)
+try:
+    print("Test Response Snippet:", test_resp.json())
+except Exception as e:
+    print("Could not parse JSON. Raw text:", test_resp.text[:300])
 
 # === Cell 5: Load Excel File ===
 input_path = 'D:/aa030/input/aa-counterintel-input.xlsx'
