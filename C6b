@@ -1,4 +1,4 @@
-# === Cell 6b: Final production pipeline — author search → affiliation match → documents → coauthors (logging + N/A fix confirmed) ===
+# === Cell 6b: Final production pipeline — tighter fuzzy matching + document loop stability ===
 
 from collections import defaultdict
 
@@ -8,7 +8,7 @@ summary_log = []
 api_calls = {'author_search': 0, 'doc_search': 0, 'abstract_retrieval': 0}
 
 max_docs_per_author = 100
-fuzzy_affil_threshold = 0.8
+fuzzy_affil_threshold = 0.9  # tightened to avoid false positives
 
 def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
@@ -59,13 +59,20 @@ def pull_documents_by_auid(scopus_id):
             print(f"  [ERROR] Status {resp.status_code}")
             break
         entries = resp.json().get('search-results', {}).get('entry', [])
+        print(f"  → Retrieved {len(entries)} docs this page")
         if not entries:
             break
-        docs.extend(entries)
+        for doc in entries:
+            if not doc.get('eid') or not doc.get('dc:title'):
+                print(f"  [SKIP] Missing eid or title, skipping doc")
+                continue
+            docs.append(doc)
         params['start'] += 25
         if len(entries) < 25:
+            print(f"  → Page returned less than 25 entries. Stopping pagination.")
             break
         time.sleep(1)
+    print(f"  → Total documents collected: {len(docs)}")
     return docs
 
 def get_authors_from_eid(eid):
