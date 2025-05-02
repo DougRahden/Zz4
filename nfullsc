@@ -1,0 +1,190 @@
+# === Cell 1: Install necessary packages ===
+!pip install pandas openpyxl requests python-Levenshtein
+
+# === Cell 2: Imports and logging ===
+import pandas as pd
+import requests
+import time
+import logging
+from difflib import SequenceMatcher
+from Levenshtein import ratio as levenshtein_ratio
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# === Cell 3: Configure API access ===
+API_KEY = 'your-api-key-here'
+INSTITUTION_TOKEN = 'your-institutional-token-here'
+
+headers = {
+    'X-ELS-APIKey': API_KEY,
+    'X-ELS-Insttoken': INSTITUTION_TOKEN,
+    'Accept': 'application/json'
+}
+
+AUTHOR_SEARCH_URL = "https://api.elsevier.com/content/search/author"
+SCOPUS_SEARCH_URL = "https://api.elsevier.com/content/search/scopus"
+
+# === Cell 4: Test SCOPUS API Key and Token ===
+test_params = {
+    'query': 'AUTHLASTNAME(Einstein) AND AUTHFIRST(Albert)',
+    'count': 1
+}
+test_resp = requests.get(AUTHOR_SEARCH_URL, headers=headers, params=test_params)
+print("Test Status Code:", test_resp.status_code)
+print("Test Response Snippet:", test_resp.text[:300])
+
+# === Cell 5: Load Excel File ===
+input_path = 'D:/aa030/input/aa-counterintel-input.xlsx'
+df = pd.read_excel(input_path, engine='openpyxl')
+print(f"Loaded {len(df)} authors from input file.")
+
+# === Cell 6a: Define helper for fuzzy affiliation match ===
+def fuzzy_match(a, b):
+    a, b = a.lower(), b.lower()
+    return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
+
+# === Cell 6b: Main processing loop ===
+primary_output = []
+secondary_output = []
+
+for idx, row in df.iterrows():
+    first = str(row.get('first_name', '')).strip()
+    middle = str(row.get('middle_name', '')).strip()
+    last = str(row.get('last_name', '')).strip()
+    if not first or not last:
+        continue
+
+    name_query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first} {middle})" if middle else f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
+    logging.info(f"Searching SCOPUS for: {first} {middle} {last}")
+
+    author_candidates = []
+    start = 0
+    while True:
+        params = {'query': name_query, 'start': start, 'count': 25}
+        resp = requests.get(AUTHOR_SEARCH_URL, headers=headers, params=params)
+        if resp.status_code != 200:
+            logging.error(f"Author search failed: {resp.status_code}")
+            break
+        data = resp.json()
+        entries = data.get('search-results', {}).get('entry', [])
+        if not entries:
+            break
+        author_candidates.extend(entries)
+        total = int(data['search-results']['opensearch:totalResults'])
+        start += 25
+        if start >= total:
+            break
+        time.sleep(1)
+
+    # Prepare known affiliations
+    known_affils = []
+    for i in range(1, 5):
+        aff = str(row.get(f'affiliation_{i}', '')).strip()
+        year = row.get(f'affiliation_{i}_year')
+        if aff and pd.notna(year):
+            known_affils.append((aff.lower(), int(year)))
+
+    best_score = 0
+    matched_author = None
+    matched_pubs = []
+
+    for author in author_candidates:
+        author_id = author.get('dc:identifier', '').split(':')[-1]
+        full_name = f"{author.get('preferred-name', {}).get('given-name', '')} {author.get('preferred-name', {}).get('surname', '')}".strip()
+        logging.info(f"Checking author: {full_name} (ID: {author_id})")
+
+        # Pull all papers
+        pubs = []
+        start_pub = 0
+        total_pubs = 1
+        while start_pub < total_pubs:
+            params = {'query': f"AU-ID({author_id})", 'start': start_pub, 'count': 100, 'view': 'COMPLETE'}
+            resp = requests.get(SCOPUS_SEARCH_URL, headers=headers, params=params)
+            if resp.status_code != 200:
+                break
+            pub_page = resp.json()
+            entries = pub_page.get('search-results', {}).get('entry', [])
+            if not entries:
+                break
+            pubs.extend(entries)
+            total_pubs = int(pub_page['search-results']['opensearch:totalResults'])
+            start_pub += 100
+            time.sleep(1)
+
+        # Score this author
+        score = 0
+        for pub in pubs:
+            pub_year = pub.get('prism:coverDate', '')[:4]
+            try:
+                pub_year = int(pub_year)
+            except:
+                continue
+
+            if 'author' not in pub:
+                continue
+
+            for auth in pub['author']:
+                if auth.get('authid') != author_id:
+                    continue
+                affils = auth.get('affiliation', [])
+                if isinstance(affils, dict):
+                    affils = [affils]
+                for affil in affils:
+                    name = affil.get('affilname', '').lower()
+                    for known_name, known_year in known_affils:
+                        if abs(pub_year - known_year) <= 6 and fuzzy_match(known_name, name):
+                            score += 1
+                            break
+
+        logging.info(f"Match score for {full_name} (ID {author_id}): {score}")
+
+        if score > best_score:
+            best_score = score
+            matched_author = (author_id, full_name)
+            matched_pubs = pubs.copy()
+
+    if not matched_author:
+        logging.warning(f"No match found for {first} {last}")
+        continue
+
+    logging.info(f"Selected author: {matched_author[1]} (ID: {matched_author[0]})")
+
+    # === Cell 7a: Process Primary Author Output ===
+    for pub in matched_pubs:
+        title = pub.get('dc:title', 'Untitled')
+        year = pub.get('prism:coverDate', '')[:4]
+        affil_str = "Affiliation Unknown"
+        for auth in pub.get('author', []):
+            if auth.get('authid') == matched_author[0]:
+                affils = auth.get('affiliation', [])
+                if isinstance(affils, dict): affils = [affils]
+                affil_parts = []
+                for aff in affils:
+                    parts = [aff.get('affilname'), aff.get('affiliation-city'), aff.get('affiliation-country')]
+                    affil_parts.append(", ".join([p for p in parts if p]))
+                affil_str = " / ".join(affil_parts)
+                break
+        primary_output.append([matched_author[1], title, affil_str])
+
+    # === Cell 7b: Process Co-authors ===
+    for pub in matched_pubs:
+        title = pub.get('dc:title', 'Untitled')
+        for auth in pub.get('author', []):
+            if auth.get('authid') == matched_author[0]:
+                continue
+            name = auth.get('authname', 'Name Unknown')
+            affils = auth.get('affiliation', [])
+            if isinstance(affils, dict): affils = [affils]
+            affil_parts = []
+            for aff in affils:
+                parts = [aff.get('affilname'), aff.get('affiliation-city'), aff.get('affiliation-country')]
+                affil_parts.append(", ".join([p for p in parts if p]))
+            affil_str = " / ".join(affil_parts) if affil_parts else "Affiliation Unknown"
+            secondary_output.append([name, matched_author[1], title, affil_str])
+
+# === Cell 8: Save Output Files ===
+output_dir = 'D:/aa030/output/'
+pd.DataFrame(primary_output, columns=["Primary Author", "Paper Title", "Affiliation"]).to_csv(output_dir + 'primary_output.csv', index=False)
+pd.DataFrame(secondary_output, columns=["Coauthor", "Primary Author", "Paper Title", "Affiliation"]).to_csv(output_dir + 'secondary_output.csv', index=False)
+
+print("Files saved.")
