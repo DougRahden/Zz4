@@ -49,10 +49,13 @@ def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
 
-# === Cell 6b: Main loop using Author Retrieval API (ENHANCED view, with strict name matching and API call tracking) ===
+# === Cell 6b: Main loop using Author Retrieval API (ENHANCED view, with name matching, API tracking, and result summary) ===
 primary_output = []
 secondary_output = []
 max_candidates = 50  # throttle per row
+
+results = []  # to hold all final matched authors and their publications
+summary_log = []  # collect summary info per person
 
 def name_similarity(input_first, input_last, candidate_fullname):
     parts = candidate_fullname.lower().split()
@@ -65,6 +68,7 @@ def name_similarity(input_first, input_last, candidate_fullname):
         levenshtein_ratio(input_first.lower(), candidate_first) > 0.8
     )
 
+# === Track API call counts ===
 api_calls = {
     'author_search': 0,
     'author_retrieval': 0
@@ -77,6 +81,7 @@ for idx, row in df.iterrows():
     if not first or not last:
         continue
 
+    excel_name = f"{first} {middle} {last}".strip()
     name_queries = [
         f"AUTHLASTNAME({last}) AND AUTHFIRST({first} {middle})" if middle else f"AUTHLASTNAME({last}) AND AUTHFIRST({first})",
         f"AUTHLASTNAME({last}) AND AUTHFIRST({first[0]})" if first else ""
@@ -119,6 +124,7 @@ for idx, row in df.iterrows():
 
     best_score = 0
     matched_author = None
+    matched_pubs = []
 
     for author in author_candidates:
         author_id = author.get('dc:identifier', '').split(':')[-1]
@@ -168,17 +174,41 @@ for idx, row in df.iterrows():
         if score > best_score:
             best_score = score
             matched_author = (author_id, full_name)
+            matched_pubs = []  # optional: include this if needed later
 
-    if not matched_author:
-        logging.warning(f"[Internal] No match found for {first} {last}")
-        continue
+    if matched_author:
+        logging.info(f"[Internal] Selected author: {matched_author[1]} (ID: {matched_author[0]})")
+        summary_log.append({
+            'input_name': excel_name,
+            'candidate_count': len(author_candidates),
+            'selected_author': matched_author[1],
+            'scopus_id': matched_author[0]
+        })
+        results.append({
+            'author_id': matched_author[0],
+            'author_name': matched_author[1],
+            'publications': matched_pubs
+        })
+    else:
+        summary_log.append({
+            'input_name': excel_name,
+            'candidate_count': len(author_candidates),
+            'selected_author': None,
+            'scopus_id': None
+        })
 
-    logging.info(f"[Internal] Selected author: {matched_author[1]} (ID: {matched_author[0]})")
-
-# === At the end: show total API call usage ===
+# === Summary output ===
 print("\n=== SCOPUS API CALL STATS ===")
 print(f"Author search queries: {api_calls['author_search']}")
 print(f"Author retrieval calls: {api_calls['author_retrieval']}")
+
+print("\n=== PER-INPUT AUTHOR SUMMARY ===")
+for entry in summary_log:
+    print(f"Input: {entry['input_name']}")
+    print(f"  Candidates Found: {entry['candidate_count']}")
+    print(f"  Selected Author: {entry['selected_author'] or 'None'}")
+    print(f"  SCOPUS ID: {entry['scopus_id'] or 'None'}")
+    print("---")
 
 
 # === Cell 7a: Process Primary Author Output ===
