@@ -49,6 +49,80 @@ def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
 
+# === Cell 6bd-NAMEDOCQUERY: Debug name-based doc pull with author + affiliation listing ===
+
+def inspect_documents_by_name_and_affil(first, last, affil_targets=None, max_docs=20):
+    base_url = "https://api.elsevier.com/content/search/scopus"
+    query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
+    params = {
+        'query': query,
+        'count': 25,
+        'start': 0,
+        'sort': 'coverDate:desc',
+        'view': 'COMPLETE'
+    }
+
+    docs = []
+    while len(docs) < max_docs:
+        resp = requests.get(base_url, headers=headers, params=params)
+        if resp.status_code != 200:
+            print(f"Error: {resp.status_code}")
+            return
+
+        page = resp.json().get('search-results', {})
+        entries = page.get('entry', [])
+        if not entries:
+            break
+
+        docs.extend(entries)
+        params['start'] += 25
+        if len(entries) < 25:
+            break
+        time.sleep(1)
+
+    print(f"\nRetrieved {len(docs)} documents for {first} {last}\n")
+
+    for i, doc in enumerate(docs):
+        title = doc.get('dc:title', 'Untitled')
+        year = doc.get('prism:coverDate', 'Unknown')
+        print(f"[{i+1}] {title} ({year})")
+
+        authors = doc.get('author', [])
+        if not isinstance(authors, list):
+            continue
+
+        for a in authors:
+            name = a.get('authname', 'Unknown')
+            scopus_id = a.get('authid', 'N/A')
+            affils = a.get('affiliation', [])
+            if isinstance(affils, dict):
+                affils = [affils]
+            affil_strs = []
+            for aff in affils:
+                parts = [
+                    aff.get('affilname', ''),
+                    aff.get('affiliation-city', ''),
+                    aff.get('affiliation-country', '')
+                ]
+                affil_strs.append(", ".join([p for p in parts if p]))
+            affil_block = " / ".join(affil_strs) if affil_strs else "No Affiliation Info"
+            if affil_targets:
+                for target in affil_targets:
+                    if target.lower() in affil_block.lower():
+                        print(f"  - {name} (ID: {scopus_id})\n    Affiliation: {affil_block}")
+            else:
+                print(f"  - {name} (ID: {scopus_id})\n    Affiliation: {affil_block}")
+        print("---")
+
+# === TEST CALL ===
+inspect_documents_by_name_and_affil(
+    first="FIRSTNAME",
+    last="LASTNAME",
+    affil_targets=["U1", "U2"],
+    max_docs=40
+)
+
+
 # === Cell 6b: Final document-first SCOPUS disambiguation (debug mode enabled) ===
 
 from collections import defaultdict
