@@ -49,6 +49,60 @@ def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
 
+# === Cell 6bz-DOCQUERY: Pull documents and paper-level affiliations for a SCOPUS ID ===
+
+def inspect_documents_by_author_id(scopus_id, max_docs=20):
+    base_url = "https://api.elsevier.com/content/search/scopus"
+    params = {
+        'query': f"AU-ID({scopus_id})",
+        'view': 'COMPLETE',
+        'count': 25,
+        'start': 0
+    }
+
+    docs = []
+    while len(docs) < max_docs:
+        resp = requests.get(base_url, headers=headers, params=params)
+        if resp.status_code != 200:
+            print(f"Error: {resp.status_code}")
+            return
+
+        page = resp.json().get('search-results', {})
+        entries = page.get('entry', [])
+        if not entries:
+            break
+
+        docs.extend(entries)
+        params['start'] += 25
+        if len(docs) >= int(page.get('opensearch:totalResults', 0)):
+            break
+        time.sleep(1)
+
+    print(f"\nRetrieved {len(docs)} documents for SCOPUS ID {scopus_id}\n")
+    for i, doc in enumerate(docs):
+        print(f"[{i+1}] {doc.get('dc:title', 'Untitled')} ({doc.get('prism:coverDate', 'No Date')})")
+        if 'author' in doc:
+            for a in doc['author']:
+                name = a.get('authname', 'Unknown')
+                affils = a.get('affiliation', [])
+                if isinstance(affils, dict):
+                    affils = [affils]
+                affil_strs = []
+                for aff in affils:
+                    parts = [
+                        aff.get('affilname'),
+                        aff.get('affiliation-city'),
+                        aff.get('affiliation-country')
+                    ]
+                    affil_strs.append(", ".join([p for p in parts if p]))
+                joined = " / ".join(affil_strs) if affil_strs else "No Affiliation Info"
+                print(f"   - {name}: {joined}")
+        print("---")
+
+# === EXAMPLE USAGE ===
+inspect_documents_by_author_id("57225158196")
+
+
 # === Cell 6by-IDTEST: Inspect SCOPUS author metadata by SCOPUS ID ===
 
 def inspect_scopus_author_by_id(scopus_id):
