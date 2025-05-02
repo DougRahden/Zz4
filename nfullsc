@@ -49,6 +49,53 @@ def fuzzy_match(a, b):
     a, b = a.lower(), b.lower()
     return levenshtein_ratio(a, b) > 0.80 or a in b or b in a
 
+# === Cell 6by-IDTEST: Inspect SCOPUS author metadata by SCOPUS ID ===
+
+def inspect_scopus_author_by_id(scopus_id):
+    url = f"https://api.elsevier.com/content/author/author_id/{scopus_id}?view=ENHANCED"
+    resp = requests.get(url, headers=headers)
+    print(f"Status code: {resp.status_code}\n")
+
+    if resp.status_code != 200:
+        print("Error retrieving author.")
+        return
+
+    try:
+        data = resp.json()['author-retrieval-response'][0]
+    except Exception as e:
+        print("Error parsing JSON response.")
+        return
+
+    print("=== BASIC INFO ===")
+    name = data.get('preferred-name', {})
+    print(f"Full Name: {name.get('given-name', '')} {name.get('surname', '')}")
+    print(f"SCOPUS ID: {scopus_id}")
+    print(f"ORCID: {data.get('orcid', 'N/A')}")
+    print(f"Document Count: {data.get('coredata', {}).get('document-count', 'N/A')}")
+    print(f"Affiliation Current: {data.get('affiliation-current', {}).get('affiliation-name', 'N/A')}")
+
+    print("\n=== SUBJECT AREAS ===")
+    areas = data.get('subject-area', [])
+    if isinstance(areas, dict): areas = [areas]
+    for a in areas:
+        print(f"- {a.get('area', '')} ({a.get('abbrev', '')})")
+
+    print("\n=== AFFILIATION HISTORY ===")
+    history = data.get('author-profile', {}).get('affiliation-history', {}).get('affiliation', [])
+    if isinstance(history, dict): history = [history]
+    for aff in history:
+        parts = [
+            aff.get('affil-name', ''),
+            aff.get('affiliation-city', ''),
+            aff.get('affiliation-country', ''),
+            aff.get('start-date', '')
+        ]
+        print("- " + ", ".join([p for p in parts if p]))
+
+# === EXAMPLE USAGE ===
+inspect_scopus_author_by_id("57225158196")
+
+
 # === Cell 6bx-TEST: Debug test for a single author match ===
 
 max_candidates = 50
