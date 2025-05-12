@@ -1,0 +1,69 @@
+# === Cell 8: Primary Co-Author Analysis (paper-driven) with API logging ===
+
+primary_coauthor_output = []
+coauthor_api_calls = {'abstract_retrieval': 0}
+
+for record in entity_resolution_output:
+    matched_name = record['matched_name']
+    scopus_id = record['scopus_id']
+    eid = record['eid']
+    if not (matched_name and scopus_id and eid):
+        print(f"[SKIP] Incomplete input: {record}")
+        continue
+
+    print(f"[API] Pulling abstract for EID {eid}")
+    url = f"https://api.elsevier.com/content/abstract/eid/{eid}"
+    resp = requests.get(url, headers=headers)
+    coauthor_api_calls['abstract_retrieval'] += 1
+
+    if resp.status_code != 200:
+        print(f"  [ERROR] Could not retrieve EID {eid}: {resp.status_code}")
+        continue
+
+    try:
+        data = resp.json()['abstracts-retrieval-response']
+        authors = data['authors']['author']
+        affils = data.get('affiliation', [])
+        if isinstance(affils, dict):
+            affils = [affils]
+        affil_lookup = {a.get('@id'): a for a in affils if '@id' in a}
+
+        for a in authors:
+            co_name = f"{a.get('ce:given-name', '')} {a.get('ce:surname', '')}".strip()
+            co_id = a.get('@auid', '')
+            if co_id == scopus_id:
+                print(f"  [SKIP] Skipping primary author {co_name}")
+                continue
+
+            aff_data = a.get('affiliation', {})
+            aff_name = ''
+            if isinstance(aff_data, dict):
+                aff_name = aff_data.get('affilname', '')
+                if not aff_name and '@id' in aff_data:
+                    fallback = affil_lookup.get(aff_data['@id'], {})
+                    aff_name = fallback.get('affilname', '')
+
+            print(f"  [LOCAL] Found coauthor: {co_name} | Affil: {aff_name}")
+            primary_coauthor_output.append({
+                'matched_name': matched_name,
+                'scopus_id': scopus_id,
+                'eid': eid,
+                'co_author_name': co_name,
+                'co_author_affiliation': aff_name
+            })
+
+    except Exception as e:
+        print(f"  [ERROR] Failed to parse coauthor block for EID {eid}: {str(e)}")
+        continue
+
+# Save to CSV
+coauthor_output_path = "D:/aa030/output/primary_coauthor_output.csv"
+coauthor_cols = ["matched_name", "scopus_id", "eid", "co_author_name", "co_author_affiliation"]
+pd.DataFrame(primary_coauthor_output, columns=coauthor_cols).to_csv(coauthor_output_path, index=False)
+
+print(f"\n[SAVED] {coauthor_output_path} → {len(primary_coauthor_output)} rows")
+
+# Summary of API usage
+print("\n=== COAUTHOR API CALL SUMMARY ===")
+for k, v in coauthor_api_calls.items():
+    print(f"{k}: {v}")
