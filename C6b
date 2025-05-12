@@ -1,6 +1,7 @@
-# === Cell 6b: Entity Resolution with guaranteed author-paper affiliation mapping ===
+# === Cell 6b: Entity Resolution with corrected paper-based author affiliation and EID export ===
 
 from collections import defaultdict
+import math
 
 entity_resolution_output = []
 summary_log = []
@@ -83,6 +84,7 @@ def pull_documents_by_auid(scopus_id):
 for idx, row in df.iterrows():
     first = str(row.get('first_name', '')).strip()
     middle = str(row.get('middle_name', '')).strip()
+    middle = '' if middle == 'nan' or pd.isna(middle) else middle
     last = str(row.get('last_name', '')).strip()
     if not first or not last:
         continue
@@ -120,6 +122,7 @@ for idx, row in df.iterrows():
             'input_name': input_name,
             'matched_name': '',
             'scopus_id': '',
+            'eid': '',
             'paper_title': '',
             'affiliation': '',
             'publication_date': ''
@@ -134,36 +137,31 @@ for idx, row in df.iterrows():
 
     for doc in docs:
         authors = doc.get('author', [])
-        doc_affils = doc.get('affiliation', [])
-        if isinstance(doc_affils, dict):
-            doc_affils = [doc_affils]
-        affil_lookup = {a.get('@id'): a for a in doc_affils if '@id' in a}
-
         eid = doc.get('eid')
         title = doc.get('dc:title', 'Untitled')
-        year = doc.get('prism:coverDate', 'Unknown')
-        affil_str = ''
+        pub_date = doc.get('prism:coverDate', 'Unknown')
 
+        affil_str = ''
         for a in authors:
             if a.get('authid') == scopus_id:
-                aff_data = a.get('affiliation', {})
-                aff_id = aff_data.get('@id') if isinstance(aff_data, dict) else None
-                aff_record = affil_lookup.get(aff_id, {})
-                parts = [
-                    aff_record.get('affilname'),
-                    aff_record.get('affiliation-city'),
-                    aff_record.get('affiliation-country')
-                ]
-                affil_str = ", ".join([p for p in parts if p])
+                affils = a.get('affiliation', [])
+                if isinstance(affils, dict):
+                    affils = [affils]
+                affil_parts = []
+                for aff in affils:
+                    parts = [aff.get('affilname'), aff.get('affiliation-city'), aff.get('affiliation-country')]
+                    affil_parts.append(", ".join([p for p in parts if p]))
+                affil_str = " / ".join(affil_parts)
                 break
 
         entity_resolution_output.append({
             'input_name': input_name,
             'matched_name': matched_name,
             'scopus_id': scopus_id,
+            'eid': eid,
             'paper_title': title,
             'affiliation': affil_str,
-            'publication_date': year
+            'publication_date': pub_date
         })
 
 # === Summary ===
