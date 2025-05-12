@@ -1,4 +1,4 @@
-# === Cell 6b: Entity Resolution with corrected paper-based author affiliation and EID export ===
+# === Cell 6b: Entity Resolution with smart city + affiliation matching and year overlap ===
 
 from collections import defaultdict
 import math
@@ -9,6 +9,7 @@ api_calls = {'author_search': 0, 'doc_search': 0}
 
 max_docs_per_author = 100
 fuzzy_affil_threshold = 0.9
+fuzzy_city_threshold = 0.9
 ignore_tokens = ["university", "college", "institute", "laboratory", "school", "of", "the", "and", "&", "center"]
 
 def clean_for_matching(text):
@@ -19,6 +20,10 @@ def fuzzy_match_cleaned(a, b):
     a_clean = clean_for_matching(a)
     b_clean = clean_for_matching(b)
     return levenshtein_ratio(a_clean, b_clean) >= fuzzy_affil_threshold or a_clean in b_clean or b_clean in a_clean
+
+def city_match(a, b):
+    a, b = a.strip().lower(), b.strip().lower()
+    return levenshtein_ratio(a, b) >= fuzzy_city_threshold or a in b or b in a
 
 def search_scopus_authors(first, last):
     query = f"AUTHLASTNAME({last}) AND AUTHFIRST({first})"
@@ -38,9 +43,11 @@ def search_scopus_authors(first, last):
             scopus_id = entry.get('dc:identifier', '').split(':')[-1]
             name_data = entry.get('preferred-name', {})
             full_name = f"{name_data.get('given-name', '')} {name_data.get('surname', '')}".strip()
-            raw_affil = entry.get('affiliation-current', {}).get('affiliation-name', '')
-            current_affil = raw_affil.strip() if raw_affil else 'N/A'
-            authors.append((scopus_id, full_name, current_affil))
+            raw_affil = entry.get('affiliation-current', {})
+            current_affil = raw_affil.get('affiliation-name', '').strip() if raw_affil else 'N/A'
+            current_city = raw_affil.get('affiliation-city', '').strip().lower() if raw_affil else ''
+            current_country = raw_affil.get('affiliation-country', '').strip() if raw_affil else ''
+            authors.append((scopus_id, full_name, current_affil, current_city, current_country))
         if len(entries) < 25:
             break
         params['start'] += 25
@@ -94,25 +101,32 @@ for idx, row in df.iterrows():
     known_affils = []
     for i in range(1, 5):
         aff = str(row.get(f'affiliation_{i}', '')).strip()
-        if aff:
-            known_affils.append((aff.lower(), i))
+        city = str(row.get(f'affiliation_{i}_city', '')).strip().lower()
+        year = row.get(f'affiliation_{i}_year')
+        if aff and pd.notna(year):
+            known_affils.append({
+                'affil': aff.lower(),
+                'city': city,
+                'year': int(year),
+                'priority': i
+            })
 
     candidates = search_scopus_authors(first, last)
     best_match = None
     best_priority = float('inf')
-    for scopus_id, full_name, current_affil in candidates:
-        print(f"  → Candidate: {full_name} (ID: {scopus_id}) | Affil: {current_affil}")
-        for affil, priority in known_affils:
-            if current_affil != 'N/A' and current_affil.lower() == affil:
-                best_match = (scopus_id, full_name, current_affil)
-                best_priority = -1
-                print(f"    [EXACT MATCH] '{current_affil}' == '{affil}'")
-                break
-            elif current_affil != 'N/A' and fuzzy_match_cleaned(current_affil, affil):
-                if best_priority > priority:
-                    best_match = (scopus_id, full_name, current_affil)
-                    best_priority = priority
-                    print(f"    [FUZZY MATCH] Fuzzy match to '{affil}' (priority {priority})")
+    for scopus_id, full_name, current_affil, current_city, current_country in candidates:
+        print(f"  → Candidate: {full_name} (ID: {scopus_id}) | Affil: {current_affil} | City: {current_city}")
+        for ref in known_affils:
+            city_match_ok = city_match(current_city, ref['city']) if current_city and ref['city'] else False
+            affil_match_ok = fuzzy_match_cleaned(current_affil, ref['affil']) if current_affil != 'N/A' else False
+            if city_match_ok or affil_match_ok:
+                if ref['priority'] < best_priority:
+                    best_match = (scopus_id, full_name, current_affil, current_city, current_country)
+                    best_priority = ref['priority']
+                    if affil_match_ok:
+                        print(f"    [FUZZY MATCH] Affiliation matched '{ref['affil']}' (priority {ref['priority']})")
+                    elif city_match_ok:
+                        print(f"    [CITY MATCH] City matched '{ref['city']}' (priority {ref['priority']})")
                 break
 
     if not best_match:
@@ -125,11 +139,13 @@ for idx, row in df.iterrows():
             'eid': '',
             'paper_title': '',
             'affiliation': '',
+            'affiliation_city': '',
+            'affiliation_country': '',
             'publication_date': ''
         })
         continue
 
-    scopus_id, matched_name, matched_affil = best_match
+    scopus_id, matched_name, matched_affil, matched_city, matched_country = best_match
     print(f"  [SELECTED] {matched_name} | SCOPUS ID: {scopus_id} | Affil: {matched_affil or 'N/A'}")
 
     docs = pull_documents_by_auid(scopus_id)
@@ -142,6 +158,8 @@ for idx, row in df.iterrows():
         pub_date = doc.get('prism:coverDate', 'Unknown')
 
         affil_str = ''
+        affil_city = ''
+        affil_country = ''
         for a in authors:
             if a.get('authid') == scopus_id:
                 affils = a.get('affiliation', [])
@@ -149,7 +167,10 @@ for idx, row in df.iterrows():
                     affils = [affils]
                 affil_parts = []
                 for aff in affils:
-                    parts = [aff.get('affilname'), aff.get('affiliation-city'), aff.get('affiliation-country')]
+                    aff_name = aff.get('affilname', '')
+                    affil_city = aff.get('affiliation-city', '')
+                    affil_country = aff.get('affiliation-country', '')
+                    parts = [aff_name, affil_city, affil_country]
                     affil_parts.append(", ".join([p for p in parts if p]))
                 affil_str = " / ".join(affil_parts)
                 break
@@ -161,6 +182,8 @@ for idx, row in df.iterrows():
             'eid': eid,
             'paper_title': title,
             'affiliation': affil_str,
+            'affiliation_city': affil_city,
+            'affiliation_country': affil_country,
             'publication_date': pub_date
         })
 
