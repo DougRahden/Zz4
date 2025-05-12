@@ -1,14 +1,15 @@
-# === Cell 7: Save entity resolution results to CSV ===
+# === Cell 7: Save entity resolution results to CSV (updated with EID field) ===
 
 import pandas as pd
 
 output_path = "D:/aa030/output/entity_resolution_output.csv"
 
-# Define column order
+# Define updated column order
 columns = [
     "input_name",
     "matched_name",
     "scopus_id",
+    "eid",
     "paper_title",
     "affiliation",
     "publication_date"
