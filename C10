@@ -1,0 +1,105 @@
+# === Cell 10: PyVis interactive co-authorship network ===
+
+from pyvis.network import Network
+import pandas as pd
+from collections import defaultdict
+
+# Load data
+entity_df = pd.read_csv("D:/aa030/output/entity_resolution_output.csv")
+primary_df = pd.read_csv("D:/aa030/output/primary_coauthor_output.csv")
+secondary_df = pd.read_csv("D:/aa030/output/secondary_coauthor_output.csv")
+
+# List of countries to flag in bright red
+red_flag_countries = [
+    "COUNTRY NAME 1 HERE", "COUNTRY NAME 2 HERE", "COUNTRY NAME 3 HERE", "COUNTRY NAME 4 HERE",
+    "COUNTRY NAME 5 HERE", "COUNTRY NAME 6 HERE", "COUNTRY NAME 7 HERE", "COUNTRY NAME 8 HERE",
+    "COUNTRY NAME 9 HERE", "COUNTRY NAME 10 HERE", "COUNTRY NAME 11 HERE", "COUNTRY NAME 12 HERE",
+    "COUNTRY NAME 13 HERE", "COUNTRY NAME 14 HERE", "COUNTRY NAME 15 HERE", "COUNTRY NAME 16 HERE",
+    "COUNTRY NAME 17 HERE", "COUNTRY NAME 18 HERE", "COUNTRY NAME 19 HERE", "COUNTRY NAME 20 HERE",
+    "COUNTRY NAME 21 HERE", "COUNTRY NAME 22 HERE"
+]
+
+# Collect node metadata
+node_labels = {}
+node_colors = {}
+affiliation_map = defaultdict(set)
+
+# Initial entity
+for _, row in entity_df.iterrows():
+    sid = row['scopus_id']
+    label = f"{row['matched_name']}\n{sid}"
+    node_labels[sid] = label
+    node_colors[sid] = 'gray'
+
+# Primary co-authors
+for _, row in primary_df.iterrows():
+    sid = row['coauthor_scopusid']
+    affil = row['coauthor_affiliation']
+    city = row.get('coauthor_affiliation_city', '')
+    country = row.get('coauthor_affiliation_country', '')
+    label = f"{row['coauthor_name']}\n{sid}"
+    affiliation_map[sid].add(f"{affil}, {city}, {country}".strip(', '))
+    node_colors[sid] = 'blue'
+
+# Secondary co-authors
+for _, row in secondary_df.iterrows():
+    sid = row['2ndcoauthor_scopusid']
+    affil = row['2ndcoauthor_affiliation']
+    city = row.get('2ndcoauthor_affiliation_city', '')
+    country = row.get('2ndcoauthor_affiliation_country', '')
+    label = f"{row['2ndcoauthor_name']}\n{sid}"
+    affiliation_map[sid].add(f"{affil}, {city}, {country}".strip(', '))
+    if sid not in node_colors:
+        node_colors[sid] = 'brown'
+
+# Build node labels with affiliations
+final_labels = {}
+for sid, base_label in node_labels.items():
+    final_labels[sid] = base_label
+for sid in affiliation_map:
+    base = final_labels.get(sid, sid)
+    affils = "\n" + "\n".join(sorted(affiliation_map[sid]))
+    final_labels[sid] = base + affils
+
+# Identify flagged nodes and update styling
+flagged_nodes = set()
+for sid, affils in affiliation_map.items():
+    for a in affils:
+        for country in red_flag_countries:
+            if country.lower() in a.lower():
+                node_colors[sid] = 'red'
+                flagged_nodes.add(sid)
+                break
+
+# Build graph and edges
+edge_weights = defaultdict(int)
+
+# Initial ↔ Primary
+for _, row in primary_df.iterrows():
+    source = entity_df.iloc[0]['scopus_id']
+    target = row['coauthor_scopusid']
+    edge_weights[(source, target)] += 1
+
+# Primary ↔ Secondary
+for _, row in secondary_df.iterrows():
+    source = row['coauthor_scopusid']
+    target = row['2ndcoauthor_scopusid']
+    edge_weights[(source, target)] += 1
+
+# Create graph
+net = Network(height='1000px', width='100%', bgcolor='#ffffff', font_color='black')
+
+# Add nodes
+for sid, label in final_labels.items():
+    color = node_colors.get(sid, 'lightgray')
+    font = {'color': 'red', 'size': 18, 'bold': True} if sid in flagged_nodes else {}
+    net.add_node(sid, label=label, color=color, title=label, font=font)
+
+# Add edges
+for (source, target), weight in edge_weights.items():
+    color = 'red' if source in flagged_nodes or target in flagged_nodes else '#cccccc'
+    net.add_edge(source, target, value=weight, title=f"{weight} shared papers", color=color)
+
+# Output HTML
+net.show("D:/aa030/output/coauthorship_graph.html")
+print("[SAVED] D:/aa030/output/coauthorship_graph.html")
