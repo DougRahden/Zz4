@@ -61,7 +61,8 @@ for _, row in primary_df.iterrows():
     net.add_node(pid, label=full_label, color='red' if is_red_flag else 'blue',
                  font={'color': 'red', 'bold': True} if is_red_flag else {}, title=full_label)
     primary_counts[pid] += 1
-    net.add_edge(initial_id, pid, value=primary_counts[pid], title="linked")
+    if str(initial_id) in net.node_ids and str(pid) in net.node_ids:
+        net.add_edge(str(initial_id), str(pid), value=primary_counts[pid], title="linked")
 
 # Output
 net.write_html("D:/aa030/output/coauthorship_country_summary_graph.html")
