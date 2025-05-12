@@ -1,4 +1,4 @@
-# === Cell 6b: Entity Resolution with smart city + affiliation matching and year overlap ===
+# === Cell 6b: Entity Resolution with safe city extraction + smart matching ===
 
 from collections import defaultdict
 import math
@@ -45,9 +45,9 @@ def search_scopus_authors(first, last):
             full_name = f"{name_data.get('given-name', '')} {name_data.get('surname', '')}".strip()
             raw_affil = entry.get('affiliation-current', {})
             current_affil = raw_affil.get('affiliation-name', '').strip() if raw_affil else 'N/A'
-            current_city = raw_affil.get('affiliation-city', '').strip().lower() if raw_affil else ''
-            current_country = raw_affil.get('affiliation-country', '').strip() if raw_affil else ''
-            authors.append((scopus_id, full_name, current_affil, current_city, current_country))
+            current_city = raw_affil.get('affiliation-city', '') or ''
+            current_country = raw_affil.get('affiliation-country', '') or ''
+            authors.append((scopus_id, full_name, current_affil, current_city.lower(), current_country))
         if len(entries) < 25:
             break
         params['start'] += 25
@@ -101,7 +101,8 @@ for idx, row in df.iterrows():
     known_affils = []
     for i in range(1, 5):
         aff = str(row.get(f'affiliation_{i}', '')).strip()
-        city = str(row.get(f'affiliation_{i}_city', '')).strip().lower()
+        raw_city = row.get(f'affiliation_{i}_city', '')
+        city = str(raw_city).strip().lower() if pd.notna(raw_city) else ''
         year = row.get(f'affiliation_{i}_year')
         if aff and pd.notna(year):
             known_affils.append({
