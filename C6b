@@ -1,4 +1,4 @@
-# === Cell 6b: Entity Resolution — Author disambiguation using name + affiliation match ===
+# === Cell 6b: Entity Resolution with guaranteed author-paper affiliation mapping ===
 
 from collections import defaultdict
 
@@ -134,6 +134,11 @@ for idx, row in df.iterrows():
 
     for doc in docs:
         authors = doc.get('author', [])
+        doc_affils = doc.get('affiliation', [])
+        if isinstance(doc_affils, dict):
+            doc_affils = [doc_affils]
+        affil_lookup = {a.get('@id'): a for a in doc_affils if '@id' in a}
+
         eid = doc.get('eid')
         title = doc.get('dc:title', 'Untitled')
         year = doc.get('prism:coverDate', 'Unknown')
@@ -141,14 +146,15 @@ for idx, row in df.iterrows():
 
         for a in authors:
             if a.get('authid') == scopus_id:
-                affils = a.get('affiliation', [])
-                if isinstance(affils, dict):
-                    affils = [affils]
-                affil_parts = []
-                for aff in affils:
-                    parts = [aff.get('affilname'), aff.get('affiliation-city'), aff.get('affiliation-country')]
-                    affil_parts.append(", ".join([p for p in parts if p]))
-                affil_str = " / ".join(affil_parts)
+                aff_data = a.get('affiliation', {})
+                aff_id = aff_data.get('@id') if isinstance(aff_data, dict) else None
+                aff_record = affil_lookup.get(aff_id, {})
+                parts = [
+                    aff_record.get('affilname'),
+                    aff_record.get('affiliation-city'),
+                    aff_record.get('affiliation-country')
+                ]
+                affil_str = ", ".join([p for p in parts if p])
                 break
 
         entity_resolution_output.append({
