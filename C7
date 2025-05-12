@@ -1,4 +1,4 @@
-# === Cell 7: Save entity resolution results to CSV (updated with EID field) ===
+# === Cell 7: Save entity resolution results to CSV (updated with affiliation city + country) ===
 
 import pandas as pd
 
@@ -12,6 +12,8 @@ columns = [
     "eid",
     "paper_title",
     "affiliation",
+    "affiliation_city",
+    "affiliation_country",
     "publication_date"
 ]
 
