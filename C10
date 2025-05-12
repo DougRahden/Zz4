@@ -66,7 +66,7 @@ flagged_nodes = set()
 for sid, affils in affiliation_map.items():
     for a in affils:
         for country in red_flag_countries:
-            if country.lower() in a.lower():
+            if any(part in a.lower() for part in country.lower().split()):
                 node_colors[sid] = 'red'
                 flagged_nodes.add(sid)
                 break
