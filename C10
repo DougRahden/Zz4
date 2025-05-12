@@ -55,8 +55,8 @@ for _, row in primary_df.iterrows():
 
     full_label = "\n".join(summary_lines)
 
-    is_red_flag = country.lower() in [r.lower() for r in red_flag_countries] or \
-                  any(c.lower() in [r.lower() for r in red_flag_countries] for c in secondary_country_counts[pid])
+    is_red_flag = str(country).lower() in [str(r).lower() for r in red_flag_countries] or \
+                  any(str(c).lower() in [str(r).lower() for r in red_flag_countries] for c in secondary_country_counts[pid])
 
     net.add_node(pid, label=full_label, color='red' if is_red_flag else 'blue',
                  font={'color': 'red', 'bold': True} if is_red_flag else {}, title=full_label)
