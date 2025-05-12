@@ -24,7 +24,13 @@ red_flag_countries = [
 red_flag_set = {str(c).lower() for c in red_flag_countries}
 
 # Build per-entity graphs
-for (initial_id, initial_name), group in entity_df.groupby(['scopus_id', 'matched_name']):
+unique_entities = set()
+for _, row in entity_df.iterrows():
+    initial_id = str(row['scopus_id']).strip()
+    initial_name = str(row['matched_name']).strip()
+    if (initial_id, initial_name) in unique_entities:
+        continue
+    unique_entities.add((initial_id, initial_name))
     initial_id = str(entity['scopus_id'])
     initial_name = entity['matched_name']
     primary_subset = primary_df[primary_df['matched_name'] == initial_name]
