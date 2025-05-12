@@ -1,0 +1,106 @@
+# === Cell 9: Secondary Co-Author Analysis (coauthor-driven) ===
+
+secondary_coauthor_output = []
+secondary_api_calls = {'doc_search': 0, 'abstract_retrieval': 0}
+
+# Collect unique first-degree coauthor IDs and names
+unique_coauthors = {}
+for row in primary_coauthor_output:
+    cid = row['coauthor_scopusid']
+    cname = row['coauthor_name']
+    if cid:
+        unique_coauthors[cid] = cname
+
+for co_scopus_id, co_name in unique_coauthors.items():
+    print(f"[API] Pulling papers for co-author: {co_name} ({co_scopus_id})")
+    doc_url = "https://api.elsevier.com/content/search/scopus"
+    doc_params = {
+        'query': f"AU-ID({co_scopus_id})",
+        'count': 25,
+        'start': 0,
+        'view': 'COMPLETE',
+        'sort': 'coverDate:desc'
+    }
+    papers = []
+    while len(papers) < 100:
+        resp = requests.get(doc_url, headers=headers, params=doc_params)
+        secondary_api_calls['doc_search'] += 1
+        if resp.status_code != 200:
+            print(f"  [ERROR] Doc pull failed for {co_scopus_id}: {resp.status_code}")
+            break
+        entries = resp.json().get('search-results', {}).get('entry', [])
+        if not entries:
+            break
+        papers.extend(entries)
+        doc_params['start'] += 25
+        if len(entries) < 25:
+            break
+        time.sleep(1)
+
+    for paper in papers:
+        eid = paper.get('eid')
+        if not eid:
+            continue
+
+        print(f"  [API] Pulling abstract for co-author paper {eid}")
+        abs_url = f"https://api.elsevier.com/content/abstract/eid/{eid}"
+        abs_resp = requests.get(abs_url, headers=headers)
+        secondary_api_calls['abstract_retrieval'] += 1
+        if abs_resp.status_code != 200:
+            continue
+
+        try:
+            data = abs_resp.json()['abstracts-retrieval-response']
+            authors = data['authors']['author']
+            affils = data.get('affiliation', [])
+            if isinstance(affils, dict):
+                affils = [affils]
+            affil_lookup = {a.get('@id'): a for a in affils if '@id' in a}
+
+            for a in authors:
+                scid = a.get('@auid', '')
+                if scid == co_scopus_id:
+                    continue  # skip original co-author
+
+                name = f"{a.get('ce:given-name', '')} {a.get('ce:surname', '')}".strip()
+
+                aff_data = a.get('affiliation', {})
+                aff_name = aff_data.get('affilname', '') if isinstance(aff_data, dict) else ''
+                aff_city = aff_data.get('affiliation-city', '') if isinstance(aff_data, dict) else ''
+                aff_country = aff_data.get('affiliation-country', '') if isinstance(aff_data, dict) else ''
+
+                if not aff_name and isinstance(aff_data, dict) and '@id' in aff_data:
+                    fallback = affil_lookup.get(aff_data['@id'], {})
+                    aff_name = fallback.get('affilname', '')
+                    aff_city = fallback.get('affiliation-city', '')
+                    aff_country = fallback.get('affiliation-country', '')
+
+                secondary_coauthor_output.append({
+                    'coauthor_name': co_name,
+                    'coauthor_scopusid': co_scopus_id,
+                    'eid': eid,
+                    '2ndcoauthor_name': name,
+                    '2ndcoauthor_scopusid': scid,
+                    '2ndcoauthor_affiliation': aff_name,
+                    '2ndcoauthor_affiliation_city': aff_city,
+                    '2ndcoauthor_affiliation_country': aff_country
+                })
+
+        except Exception as e:
+            print(f"    [ERROR] Failed to parse secondary coauthor block for EID {eid}")
+            continue
+
+# Save output
+secondary_output_path = "D:/aa030/output/secondary_coauthor_output.csv"
+cols = [
+    "coauthor_name", "coauthor_scopusid", "eid",
+    "2ndcoauthor_name", "2ndcoauthor_scopusid",
+    "2ndcoauthor_affiliation", "2ndcoauthor_affiliation_city", "2ndcoauthor_affiliation_country"
+]
+pd.DataFrame(secondary_coauthor_output, columns=cols).to_csv(secondary_output_path, index=False)
+
+print(f"\n[SAVED] {secondary_output_path} → {len(secondary_coauthor_output)} rows")
+
+print("\n=== SECONDARY COAUTHOR API CALL SUMMARY ===")
+for k, v in secondary_api_calls.items():
+    print(f"{k}: {v}")
