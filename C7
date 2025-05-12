@@ -1,14 +1,20 @@
-# === STEP 7: OUTPUT ===
+# === Cell 7: Save entity resolution results to CSV ===
 
-# Updated to save to D:/aa030/output/ directory
-primary_output_filename = 'D:/aa030/output/primary_output.csv'
-secondary_output_filename = 'D:/aa030/output/secondary_output.csv'
+import pandas as pd
 
-primary_df = pd.DataFrame(primary_output, columns=["Primary Author", "Paper Title", "Primary Author Affiliation"])
-secondary_df = pd.DataFrame(secondary_output, columns=["Secondary Author", "Primary Author", "Paper Title", "Secondary Author Affiliation"])
+output_path = "D:/aa030/output/entity_resolution_output.csv"
 
-primary_df.to_csv(primary_output_filename, index=False)
-secondary_df.to_csv(secondary_output_filename, index=False)
+# Define column order
+columns = [
+    "input_name",
+    "matched_name",
+    "scopus_id",
+    "paper_title",
+    "affiliation",
+    "publication_date"
+]
 
-print(f"Saved {len(primary_df)} primary author entries to {primary_output_filename}")
-print(f"Saved {len(secondary_df)} secondary author entries to {secondary_output_filename}")
+# Save the data
+pd.DataFrame(entity_resolution_output, columns=columns).to_csv(output_path, index=False)
+
+print(f"[SAVED] {output_path} → {len(entity_resolution_output)} rows")
