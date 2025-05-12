@@ -174,11 +174,14 @@ for idx, row in df.iterrows():
                 affil_parts = []
                 for aff in affils:
                     aff_name = aff.get('affilname', '')
-                    affil_city = aff.get('affiliation-city', '')
-                    affil_country = aff.get('affiliation-country', '')
-                    parts = [aff_name, affil_city, affil_country]
-                    affil_parts.append(", ".join([p for p in parts if p]))
+                    city = aff.get('affiliation-city', '')
+                    country = aff.get('affiliation-country', '')
+                    affil_parts.append(", ".join([p for p in [aff_name, city, country] if p]))
                 affil_str = " / ".join(affil_parts)
+                if affils:
+                    first_affil = affils[0]
+                    affil_city = first_affil.get('affiliation-city', '')    
+                       affil_country = first_affil.get('affiliation-country', '')
                 break
 
         entity_resolution_output.append({
