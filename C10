@@ -1,8 +1,9 @@
-# === Cell 10: Summary Graph by Country per Primary Co-Author ===
+# === Cell 10: One PyVis graph per initial entity (primary → country mapping) ===
 
 from pyvis.network import Network
 import pandas as pd
 from collections import defaultdict
+import os
 
 # Load data
 entity_df = pd.read_csv("D:/aa030/output/entity_resolution_output.csv")
@@ -19,51 +20,50 @@ red_flag_countries = [
     "COUNTRY NAME 21 HERE", "COUNTRY NAME 22 HERE"
 ]
 
-# Map: coauthor_scopusid → list of country counts from secondary coauthors
-secondary_country_counts = defaultdict(lambda: defaultdict(int))
-for _, row in secondary_df.iterrows():
-    co_id = row['coauthor_scopusid']
-    country = str(row['2ndcoauthor_affiliation_country']).strip()
-    if country:
-        secondary_country_counts[co_id][country] += 1
+# Normalize
+red_flag_set = {str(c).lower() for c in red_flag_countries}
 
-# Start graph
-net = Network(height='1000px', width='100%', bgcolor='#ffffff', font_color='black')
+# Build per-entity graphs
+for _, entity in entity_df.iterrows():
+    initial_id = str(entity['scopus_id'])
+    initial_name = entity['matched_name']
+    primary_subset = primary_df[primary_df['matched_name'] == initial_name]
+    secondary_subset = secondary_df[secondary_df['coauthor_name'].isin(primary_subset['coauthor_name'])]
 
-# Add initial entity node
-initial = entity_df.iloc[0]
-initial_id = initial['scopus_id']
-initial_label = f"{initial['matched_name']}\n{initial_id}"
-net.add_node(str(initial_id), label=initial_label, color='gray', title=initial_label)
+    net = Network(height='1000px', width='100%', bgcolor='#ffffff', font_color='black')
 
-# Build primary co-author nodes
-primary_counts = defaultdict(int)
-for _, row in primary_df.iterrows():
-    pid = str(row['coauthor_scopusid'])
-    pname = row['coauthor_name']
-    affil = row['coauthor_affiliation']
-    city = row.get('coauthor_affiliation_city', '')
-    country = row.get('coauthor_affiliation_country', '')
+    initial_label = f"{initial_name}\n{initial_id}"
+    net.add_node(initial_id, label=initial_label, color='gray', title=initial_label)
 
-    affil_line = f"{affil}, {city}, {country}".strip(', ')
-    summary_lines = [f"{pname}\n{pid}", affil_line]
+    for _, row in primary_subset.iterrows():
+        pid = str(row['coauthor_scopusid'])
+        pname = row['coauthor_name']
+        affil = row['coauthor_affiliation']
+        city = row.get('coauthor_affiliation_city', '')
+        country = row.get('coauthor_affiliation_country', '')
 
-    if pid in secondary_country_counts:
-        summary_lines.append("\n--- Secondary Coauthors ---")
-        for c, count in sorted(secondary_country_counts[pid].items(), key=lambda x: -x[1]):
-            summary_lines.append(f"{count} from {c}")
+        affil_block = f"{pname}\n{pid}\n{affil}, {city}, {country}".strip(', ')
 
-    full_label = "\n".join(summary_lines)
+        secondary_countries = secondary_subset[secondary_subset['coauthor_scopusid'] == pid]
+        country_counts = defaultdict(int)
+        for _, row2 in secondary_countries.iterrows():
+            ctry = str(row2['2ndcoauthor_affiliation_country']).strip()
+            if ctry:
+                country_counts[ctry] += 1
 
-    is_red_flag = str(country).lower() in [str(r).lower() for r in red_flag_countries] or \
-                  any(str(c).lower() in [str(r).lower() for r in red_flag_countries] for c in secondary_country_counts[pid])
+        is_red_flag = str(country).lower() in red_flag_set or any(str(c).lower() in red_flag_set for c in country_counts)
+        color = 'red' if is_red_flag else 'blue'
+        font = {'color': 'red', 'bold': True} if is_red_flag else {}
 
-    net.add_node(pid, label=full_label, color='red' if is_red_flag else 'blue',
-                 font={'color': 'red', 'bold': True} if is_red_flag else {}, title=full_label)
-    primary_counts[pid] += 1
-    if str(initial_id) in net.node_ids and str(pid) in net.node_ids:
-        net.add_edge(str(initial_id), str(pid), value=primary_counts[pid], title="linked")
+        net.add_node(pid, label=affil_block, color=color, title=affil_block, font=font)
+        net.add_edge(initial_id, pid, value=1)
 
-# Output
-net.write_html("D:/aa030/output/coauthorship_country_summary_graph.html")
-print("[SAVED] D:/aa030/output/coauthorship_country_summary_graph.html")
+        for ctry, count in country_counts.items():
+            cnode = f"{pid}_{ctry}"  # Unique per primary coauthor
+            net.add_node(cnode, label=ctry, color='orange')
+            net.add_edge(pid, cnode, value=count, title=f"{count} secondary coauthors")
+
+    safe_name = initial_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+    output_path = f"D:/aa030/output/coauthor_network_{safe_name}.html"
+    net.write_html(output_path)
+    print(f"[SAVED] {output_path}")
