@@ -45,9 +45,9 @@ def search_scopus_authors(first, last):
             full_name = f"{name_data.get('given-name', '')} {name_data.get('surname', '')}".strip()
             raw_affil = entry.get('affiliation-current')
             if isinstance(raw_affil, dict):
-                current_affil = raw_affil.get('affiliation-name', '').strip()
-                current_city = raw_affil.get('affiliation-city', '').strip().lower()
-                current_country = raw_affil.get('affiliation-country', '').strip()
+                current_affil = str(raw_affil.get('affiliation-name') or '').strip()
+                current_city = str(raw_affil.get('affiliation-city') or '').strip().lower()
+                current_country = str(raw_affil.get('affiliation-country') or '').strip()
             else:
                 current_affil = 'N/A'
                 current_city = ''
