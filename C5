@@ -1,3 +1,5 @@
-# === Prepare output containers ===
-primary_output = []
-secondary_output = []
+# === Cell 5: Load Excel File (now includes affiliation_X_city fields) ===
+
+input_path = 'D:/aa030/input/aa-counterintel-input.xlsx'
+df = pd.read_excel(input_path, engine='openpyxl')
+print(f"Loaded {len(df)} rows from input file including city-level affiliation fields.")
