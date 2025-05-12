@@ -1,4 +1,4 @@
-# === Cell 10: Summary Graph by Country per Primary Co-Author (final) ===
+# === Cell 10: Summary Graph by Country per Primary Co-Author (with paper counts) ===
 
 from pyvis.network import Network
 import pandas as pd
@@ -20,8 +20,22 @@ red_flag_countries = [
 ]
 red_flag_set = {str(c).lower() for c in red_flag_countries}
 
-# Track processed (scopus_id, matched_name) to avoid duplicates
+# Track processed entities
 seen = set()
+
+# Precompute paper counts between initial ↔ primary
+primary_counts = defaultdict(int)
+for _, row in primary_df.iterrows():
+    key = (str(row['matched_name']).strip(), str(row['coauthor_scopusid']))
+    primary_counts[key] += 1
+
+# Precompute paper counts per country for each coauthor
+secondary_country_counts = defaultdict(lambda: defaultdict(int))
+for _, row in secondary_df.iterrows():
+    cid = str(row['coauthor_scopusid'])
+    country = str(row['2ndcoauthor_affiliation_country']).strip()
+    if country:
+        secondary_country_counts[cid][country] += 1
 
 for _, row in entity_df.iterrows():
     initial_id = str(row['scopus_id']).strip()
@@ -38,7 +52,6 @@ for _, row in entity_df.iterrows():
     primary_ids = set(primary_subset['coauthor_scopusid'].astype(str))
     secondary_subset = secondary_df[secondary_df['coauthor_scopusid'].astype(str).isin(primary_ids)]
 
-    primary_counts = defaultdict(int)
     for _, prow in primary_subset.iterrows():
         pid = str(prow['coauthor_scopusid'])
         pname = prow['coauthor_name']
@@ -46,27 +59,33 @@ for _, row in entity_df.iterrows():
         city = prow.get('coauthor_affiliation_city', '')
         country = prow.get('coauthor_affiliation_country', '')
 
-        affil_block = f"{pname}\n{pid}\n{affil}, {city}, {country}".strip(', ')
+        shared_papers = primary_counts.get((initial_name, pid), 1)
+        affil_line = f"{affil}, {city}, {country}".strip(', ')
+        label_lines = [f"{pname} ({shared_papers})", pid, affil_line]
 
-        # Count second-degree countries
-        country_counts = defaultdict(int)
-        for _, row2 in secondary_subset[secondary_subset['coauthor_scopusid'].astype(str) == pid].iterrows():
-            ctry = str(row2['2ndcoauthor_affiliation_country']).strip()
-            if ctry:
-                country_counts[ctry] += 1
+        # Country counts
+        country_lines = []
+        is_red_flag = str(country).lower() in red_flag_set
+        for ctry, count in sorted(secondary_country_counts[pid].items(), key=lambda x: -x[1]):
+            country_lines.append(f"{count} from {ctry}")
+            if str(ctry).lower() in red_flag_set:
+                is_red_flag = True
 
-        # Red flag condition
-        is_red_flag = str(country).lower() in red_flag_set or any(str(c).lower() in red_flag_set for c in country_counts)
-        color = 'red' if is_red_flag else 'blue'
+        if country_lines:
+            label_lines.append("--- Secondary Coauthors ---")
+            label_lines.extend(country_lines)
+
+        full_label = "\n".join(label_lines)
+        node_color = 'red' if is_red_flag else 'blue'
         font = {'color': 'red', 'bold': True} if is_red_flag else {}
 
-        net.add_node(pid, label=affil_block, color=color, title=affil_block, font=font)
-        net.add_edge(initial_id, pid, value=1)
+        net.add_node(pid, label=full_label, color=node_color, title=full_label, font=font)
+        net.add_edge(initial_id, pid, value=shared_papers, title=f"{shared_papers} shared papers")
 
-        for ctry, count in country_counts.items():
+        for ctry, count in secondary_country_counts[pid].items():
             cnode = f"{pid}_{ctry}"
-            country_color = 'red' if str(ctry).lower() in red_flag_set else 'orange'
-            net.add_node(cnode, label=ctry, color=country_color)
+            ccolor = 'red' if str(ctry).lower() in red_flag_set else 'orange'
+            net.add_node(cnode, label=f"{ctry} ({count})", color=ccolor)
             net.add_edge(pid, cnode, value=count, title=f"{count} secondary coauthors")
 
     safe_name = initial_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
