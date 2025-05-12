@@ -1,23 +1,21 @@
-# === Cell 7: Save entity resolution results to CSV (updated with affiliation city + country) ===
+# === Cell 7: Save entity resolution results to CSV with latest affiliation fields ===
 
 import pandas as pd
 
 output_path = "D:/aa030/output/entity_resolution_output.csv"
 
-# Define updated column order
 columns = [
     "input_name",
     "matched_name",
     "scopus_id",
     "eid",
     "paper_title",
-    "affiliation",
-    "affiliation_city",
-    "affiliation_country",
+    "affiliation_latest",
+    "affiliation_city_latest",
+    "affiliation_country_latest",
     "publication_date"
 ]
 
-# Save the data
 pd.DataFrame(entity_resolution_output, columns=columns).to_csv(output_path, index=False)
 
 print(f"[SAVED] {output_path} → {len(entity_resolution_output)} rows")
