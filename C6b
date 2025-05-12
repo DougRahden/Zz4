@@ -1,4 +1,4 @@
-# === Cell 6b: Full entity resolution logic with safe affiliation-current handling ===
+# === Cell 6b: Entity Resolution with hybrid affiliation-city match and fallback affiliation join ===
 
 from collections import defaultdict
 import math
@@ -159,6 +159,11 @@ for idx, row in df.iterrows():
 
     for doc in docs:
         authors = doc.get('author', [])
+        doc_affils = doc.get('affiliation', [])
+        if isinstance(doc_affils, dict):
+            doc_affils = [doc_affils]
+        affil_lookup = {a.get('@id'): a for a in doc_affils if '@id' in a}
+
         eid = doc.get('eid')
         title = doc.get('dc:title', 'Untitled')
         pub_date = doc.get('prism:coverDate', 'Unknown')
@@ -176,12 +181,23 @@ for idx, row in df.iterrows():
                     aff_name = aff.get('affilname', '')
                     city = aff.get('affiliation-city', '')
                     country = aff.get('affiliation-country', '')
-                    affil_parts.append(", ".join([p for p in [aff_name, city, country] if p]))
+
+                    if not aff_name and '@id' in aff:
+                        aff_id = aff['@id']
+                        fallback = affil_lookup.get(aff_id, {})
+                        aff_name = fallback.get('affilname', '')
+                        city = fallback.get('affiliation-city', '')
+                        country = fallback.get('affiliation-country', '')
+
+                    parts = [aff_name, city, country]
+                    affil_parts.append(", ".join([p for p in parts if p]))
+
+                    if not affil_city and city:
+                        affil_city = city
+                    if not affil_country and country:
+                        affil_country = country
+
                 affil_str = " / ".join(affil_parts)
-                if affils:
-                    first_affil = affils[0]
-                    affil_city = first_affil.get('affiliation-city', '')    
-                       affil_country = first_affil.get('affiliation-country', '')
                 break
 
         entity_resolution_output.append({
