@@ -24,7 +24,7 @@ red_flag_countries = [
 red_flag_set = {str(c).lower() for c in red_flag_countries}
 
 # Build per-entity graphs
-for _, entity in entity_df.iterrows():
+for (initial_id, initial_name), group in entity_df.groupby(['scopus_id', 'matched_name']):
     initial_id = str(entity['scopus_id'])
     initial_name = entity['matched_name']
     primary_subset = primary_df[primary_df['matched_name'] == initial_name]
@@ -64,6 +64,6 @@ for _, entity in entity_df.iterrows():
             net.add_edge(pid, cnode, value=count, title=f"{count} secondary coauthors")
 
     safe_name = initial_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    output_path = f"D:/aa030/output/coauthor_network_{safe_name}.html"
+    output_path = f"D:/aa030/output/coauthor_network_{safe_name}_{initial_id}.html"
     net.write_html(output_path)
     print(f"[SAVED] {output_path}")
