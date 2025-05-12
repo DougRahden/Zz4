@@ -1,9 +1,8 @@
-# === Cell 10: One PyVis graph per initial entity (primary → country mapping) ===
+# === Cell 10: Summary Graph by Country per Primary Co-Author (final) ===
 
 from pyvis.network import Network
 import pandas as pd
 from collections import defaultdict
-import os
 
 # Load data
 entity_df = pd.read_csv("D:/aa030/output/entity_resolution_output.csv")
@@ -19,26 +18,25 @@ red_flag_countries = [
     "COUNTRY NAME 17 HERE", "COUNTRY NAME 18 HERE", "COUNTRY NAME 19 HERE", "COUNTRY NAME 20 HERE",
     "COUNTRY NAME 21 HERE", "COUNTRY NAME 22 HERE"
 ]
-
-# Normalize
 red_flag_set = {str(c).lower() for c in red_flag_countries}
 
-# Build per-entity graphs
-unique_entities = set()
+# Track processed (scopus_id, matched_name) to avoid duplicates
+seen = set()
+
 for _, row in entity_df.iterrows():
     initial_id = str(row['scopus_id']).strip()
     initial_name = str(row['matched_name']).strip()
-    if (initial_id, initial_name) in unique_entities:
+    if (initial_id, initial_name) in seen:
         continue
-    unique_entities.add((initial_id, initial_name))
+    seen.add((initial_id, initial_name))
 
     net = Network(height='1000px', width='100%', bgcolor='#ffffff', font_color='black')
-
     initial_label = f"{initial_name}\n{initial_id}"
     net.add_node(initial_id, label=initial_label, color='gray', title=initial_label)
 
     primary_subset = primary_df[primary_df['matched_name'].astype(str).str.strip() == initial_name]
-    secondary_subset = secondary_df[secondary_df['coauthor_scopusid'].astype(str).isin(primary_subset['coauthor_scopusid'].astype(str))]
+    primary_ids = set(primary_subset['coauthor_scopusid'].astype(str))
+    secondary_subset = secondary_df[secondary_df['coauthor_scopusid'].astype(str).isin(primary_ids)]
 
     primary_counts = defaultdict(int)
     for _, prow in primary_subset.iterrows():
@@ -50,69 +48,28 @@ for _, row in entity_df.iterrows():
 
         affil_block = f"{pname}\n{pid}\n{affil}, {city}, {country}".strip(', ')
 
-        secondary_countries = secondary_subset[secondary_subset['coauthor_scopusid'].astype(str) == pid]
+        # Count second-degree countries
         country_counts = defaultdict(int)
-        for _, row2 in secondary_countries.iterrows():
+        for _, row2 in secondary_subset[secondary_subset['coauthor_scopusid'].astype(str) == pid].iterrows():
             ctry = str(row2['2ndcoauthor_affiliation_country']).strip()
             if ctry:
                 country_counts[ctry] += 1
 
+        # Red flag condition
         is_red_flag = str(country).lower() in red_flag_set or any(str(c).lower() in red_flag_set for c in country_counts)
         color = 'red' if is_red_flag else 'blue'
         font = {'color': 'red', 'bold': True} if is_red_flag else {}
 
         net.add_node(pid, label=affil_block, color=color, title=affil_block, font=font)
-        primary_counts[pid] += 1
         net.add_edge(initial_id, pid, value=1)
 
         for ctry, count in country_counts.items():
             cnode = f"{pid}_{ctry}"
-            net.add_node(cnode, label=ctry, color='orange')
+            country_color = 'red' if str(ctry).lower() in red_flag_set else 'orange'
+            net.add_node(cnode, label=ctry, color=country_color)
             net.add_edge(pid, cnode, value=count, title=f"{count} secondary coauthors")
 
     safe_name = initial_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    output_path = f"D:/aa030/output/coauthor_network_{safe_name}_{initial_id}.html"
-    net.write_html(output_path)
-    print(f"[SAVED] {output_path}")
-    initial_id = str(entity['scopus_id'])
-    initial_name = entity['matched_name']
-    primary_subset = primary_df[primary_df['matched_name'] == initial_name]
-    secondary_subset = secondary_df[secondary_df['coauthor_name'].isin(primary_subset['coauthor_name'])]
-
-    net = Network(height='1000px', width='100%', bgcolor='#ffffff', font_color='black')
-
-    initial_label = f"{initial_name}\n{initial_id}"
-    net.add_node(initial_id, label=initial_label, color='gray', title=initial_label)
-
-    for _, row in primary_subset.iterrows():
-        pid = str(row['coauthor_scopusid'])
-        pname = row['coauthor_name']
-        affil = row['coauthor_affiliation']
-        city = row.get('coauthor_affiliation_city', '')
-        country = row.get('coauthor_affiliation_country', '')
-
-        affil_block = f"{pname}\n{pid}\n{affil}, {city}, {country}".strip(', ')
-
-        secondary_countries = secondary_subset[secondary_subset['coauthor_scopusid'] == pid]
-        country_counts = defaultdict(int)
-        for _, row2 in secondary_countries.iterrows():
-            ctry = str(row2['2ndcoauthor_affiliation_country']).strip()
-            if ctry:
-                country_counts[ctry] += 1
-
-        is_red_flag = str(country).lower() in red_flag_set or any(str(c).lower() in red_flag_set for c in country_counts)
-        color = 'red' if is_red_flag else 'blue'
-        font = {'color': 'red', 'bold': True} if is_red_flag else {}
-
-        net.add_node(pid, label=affil_block, color=color, title=affil_block, font=font)
-        net.add_edge(initial_id, pid, value=1)
-
-        for ctry, count in country_counts.items():
-            cnode = f"{pid}_{ctry}"  # Unique per primary coauthor
-            net.add_node(cnode, label=ctry, color='orange')
-            net.add_edge(pid, cnode, value=count, title=f"{count} secondary coauthors")
-
-    safe_name = initial_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    output_path = f"D:/aa030/output/coauthor_network_{safe_name}_{initial_id}.html"
+    output_path = f"D:/aa030/output/coauthor_network_{safe_name}.html"
     net.write_html(output_path)
     print(f"[SAVED] {output_path}")
