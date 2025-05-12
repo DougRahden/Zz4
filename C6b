@@ -1,4 +1,4 @@
-# === Cell 6b: Entity Resolution with hybrid affiliation-city match and fallback affiliation join ===
+# === Cell 6b: Entity Resolution using current SCOPUS profile affiliation only ===
 
 from collections import defaultdict
 import math
@@ -144,9 +144,9 @@ for idx, row in df.iterrows():
             'scopus_id': '',
             'eid': '',
             'paper_title': '',
-            'affiliation': '',
-            'affiliation_city': '',
-            'affiliation_country': '',
+            'affiliation_latest': '',
+            'affiliation_city_latest': '',
+            'affiliation_country_latest': '',
             'publication_date': ''
         })
         continue
@@ -158,47 +158,9 @@ for idx, row in df.iterrows():
     summary_log.append({'input': input_name, 'scopus_id': scopus_id, 'matched_affil': matched_affil, 'docs': len(docs)})
 
     for doc in docs:
-        authors = doc.get('author', [])
-        doc_affils = doc.get('affiliation', [])
-        if isinstance(doc_affils, dict):
-            doc_affils = [doc_affils]
-        affil_lookup = {a.get('@id'): a for a in doc_affils if '@id' in a}
-
         eid = doc.get('eid')
         title = doc.get('dc:title', 'Untitled')
         pub_date = doc.get('prism:coverDate', 'Unknown')
-
-        affil_str = ''
-        affil_city = ''
-        affil_country = ''
-        for a in authors:
-            if a.get('authid') == scopus_id:
-                affils = a.get('affiliation', [])
-                if isinstance(affils, dict):
-                    affils = [affils]
-                affil_parts = []
-                for aff in affils:
-                    aff_name = aff.get('affilname', '')
-                    city = aff.get('affiliation-city', '')
-                    country = aff.get('affiliation-country', '')
-
-                    if not aff_name and '@id' in aff:
-                        aff_id = aff['@id']
-                        fallback = affil_lookup.get(aff_id, {})
-                        aff_name = fallback.get('affilname', '')
-                        city = fallback.get('affiliation-city', '')
-                        country = fallback.get('affiliation-country', '')
-
-                    parts = [aff_name, city, country]
-                    affil_parts.append(", ".join([p for p in parts if p]))
-
-                    if not affil_city and city:
-                        affil_city = city
-                    if not affil_country and country:
-                        affil_country = country
-
-                affil_str = " / ".join(affil_parts)
-                break
 
         entity_resolution_output.append({
             'input_name': input_name,
@@ -206,9 +168,9 @@ for idx, row in df.iterrows():
             'scopus_id': scopus_id,
             'eid': eid,
             'paper_title': title,
-            'affiliation': affil_str,
-            'affiliation_city': affil_city,
-            'affiliation_country': affil_country,
+            'affiliation_latest': matched_affil,
+            'affiliation_city_latest': matched_city,
+            'affiliation_country_latest': matched_country,
             'publication_date': pub_date
         })
 
