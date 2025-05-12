@@ -1,4 +1,4 @@
-# === Cell 8: Primary Co-Author Analysis (paper-driven) with API logging ===
+# === Cell 8: Primary Co-Author Analysis (paper-driven) with full affiliation details ===
 
 primary_coauthor_output = []
 coauthor_api_calls = {'abstract_retrieval': 0}
@@ -35,21 +35,31 @@ for record in entity_resolution_output:
                 print(f"  [SKIP] Skipping primary author {co_name}")
                 continue
 
-            aff_data = a.get('affiliation', {})
             aff_name = ''
+            aff_city = ''
+            aff_country = ''
+
+            aff_data = a.get('affiliation', {})
             if isinstance(aff_data, dict):
                 aff_name = aff_data.get('affilname', '')
+                aff_city = aff_data.get('affiliation-city', '')
+                aff_country = aff_data.get('affiliation-country', '')
                 if not aff_name and '@id' in aff_data:
                     fallback = affil_lookup.get(aff_data['@id'], {})
                     aff_name = fallback.get('affilname', '')
+                    aff_city = fallback.get('affiliation-city', '')
+                    aff_country = fallback.get('affiliation-country', '')
 
             print(f"  [LOCAL] Found coauthor: {co_name} | Affil: {aff_name}")
             primary_coauthor_output.append({
                 'matched_name': matched_name,
-                'scopus_id': scopus_id,
+                'matched_scopusid': scopus_id,
                 'eid': eid,
-                'co_author_name': co_name,
-                'co_author_affiliation': aff_name
+                'coauthor_name': co_name,
+                'coauthor_scopusid': co_id,
+                'coauthor_affiliation': aff_name,
+                'coauthor_affiliation_city': aff_city,
+                'coauthor_affiliation_country': aff_country
             })
 
     except Exception as e:
@@ -58,7 +68,11 @@ for record in entity_resolution_output:
 
 # Save to CSV
 coauthor_output_path = "D:/aa030/output/primary_coauthor_output.csv"
-coauthor_cols = ["matched_name", "scopus_id", "eid", "co_author_name", "co_author_affiliation"]
+coauthor_cols = [
+    "matched_name", "matched_scopusid", "eid",
+    "coauthor_name", "coauthor_scopusid",
+    "coauthor_affiliation", "coauthor_affiliation_city", "coauthor_affiliation_country"
+]
 pd.DataFrame(primary_coauthor_output, columns=coauthor_cols).to_csv(coauthor_output_path, index=False)
 
 print(f"\n[SAVED] {coauthor_output_path} → {len(primary_coauthor_output)} rows")
