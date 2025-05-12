@@ -59,7 +59,7 @@ for sid, base_label in node_labels.items():
 for sid in affiliation_map:
     base = final_labels.get(sid, sid)
     affils = "\n" + "\n".join(sorted(affiliation_map[sid]))
-    final_labels[sid] = base + affils
+    final_labels[sid] = str(base) + str(affils)
 
 # Identify flagged nodes and update styling
 flagged_nodes = set()
@@ -101,5 +101,5 @@ for (source, target), weight in edge_weights.items():
     net.add_edge(source, target, value=weight, title=f"{weight} shared papers", color=color)
 
 # Output HTML
-net.show("D:/aa030/output/coauthorship_graph.html")
-print("[SAVED] D:/aa030/output/coauthorship_graph.html")
+net.write_html("D:/aa030/output/coauthorship_graph.html")
+print("[SAVED] D:/aa030/output/coauthorship_graph.html — open manually in browser")
