@@ -1,4 +1,4 @@
-# === Cell 6b: Entity Resolution with safe city extraction + smart matching ===
+# === Cell 6b: Full entity resolution logic with safe affiliation-current handling ===
 
 from collections import defaultdict
 import math
@@ -43,11 +43,16 @@ def search_scopus_authors(first, last):
             scopus_id = entry.get('dc:identifier', '').split(':')[-1]
             name_data = entry.get('preferred-name', {})
             full_name = f"{name_data.get('given-name', '')} {name_data.get('surname', '')}".strip()
-            raw_affil = entry.get('affiliation-current', {})
-            current_affil = raw_affil.get('affiliation-name', '').strip() if raw_affil else 'N/A'
-            current_city = raw_affil.get('affiliation-city', '') or ''
-            current_country = raw_affil.get('affiliation-country', '') or ''
-            authors.append((scopus_id, full_name, current_affil, current_city.lower(), current_country))
+            raw_affil = entry.get('affiliation-current')
+            if isinstance(raw_affil, dict):
+                current_affil = raw_affil.get('affiliation-name', '').strip()
+                current_city = raw_affil.get('affiliation-city', '').strip().lower()
+                current_country = raw_affil.get('affiliation-country', '').strip()
+            else:
+                current_affil = 'N/A'
+                current_city = ''
+                current_country = ''
+            authors.append((scopus_id, full_name, current_affil, current_city, current_country))
         if len(entries) < 25:
             break
         params['start'] += 25
