@@ -93,12 +93,12 @@ net = Network(height='1000px', width='100%', bgcolor='#ffffff', font_color='blac
 for sid, label in final_labels.items():
     color = node_colors.get(sid, 'lightgray')
     font = {'color': 'red', 'size': 18, 'bold': True} if sid in flagged_nodes else {}
-    net.add_node(sid, label=label, color=color, title=label, font=font)
+    net.add_node(str(sid), label=str(label), color=color, title=str(label), font=font)
 
 # Add edges
 for (source, target), weight in edge_weights.items():
     color = 'red' if source in flagged_nodes or target in flagged_nodes else '#cccccc'
-    net.add_edge(source, target, value=weight, title=f"{weight} shared papers", color=color)
+    net.add_edge(str(source), str(target), value=int(weight), title=f"{weight} shared papers", color=color)
 
 # Output HTML
 net.write_html("D:/aa030/output/coauthorship_graph.html")
