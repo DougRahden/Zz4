@@ -31,6 +31,49 @@ for _, row in entity_df.iterrows():
     if (initial_id, initial_name) in unique_entities:
         continue
     unique_entities.add((initial_id, initial_name))
+
+    net = Network(height='1000px', width='100%', bgcolor='#ffffff', font_color='black')
+
+    initial_label = f"{initial_name}\n{initial_id}"
+    net.add_node(initial_id, label=initial_label, color='gray', title=initial_label)
+
+    primary_subset = primary_df[primary_df['matched_name'].astype(str).str.strip() == initial_name]
+    secondary_subset = secondary_df[secondary_df['coauthor_scopusid'].astype(str).isin(primary_subset['coauthor_scopusid'].astype(str))]
+
+    primary_counts = defaultdict(int)
+    for _, prow in primary_subset.iterrows():
+        pid = str(prow['coauthor_scopusid'])
+        pname = prow['coauthor_name']
+        affil = prow['coauthor_affiliation']
+        city = prow.get('coauthor_affiliation_city', '')
+        country = prow.get('coauthor_affiliation_country', '')
+
+        affil_block = f"{pname}\n{pid}\n{affil}, {city}, {country}".strip(', ')
+
+        secondary_countries = secondary_subset[secondary_subset['coauthor_scopusid'].astype(str) == pid]
+        country_counts = defaultdict(int)
+        for _, row2 in secondary_countries.iterrows():
+            ctry = str(row2['2ndcoauthor_affiliation_country']).strip()
+            if ctry:
+                country_counts[ctry] += 1
+
+        is_red_flag = str(country).lower() in red_flag_set or any(str(c).lower() in red_flag_set for c in country_counts)
+        color = 'red' if is_red_flag else 'blue'
+        font = {'color': 'red', 'bold': True} if is_red_flag else {}
+
+        net.add_node(pid, label=affil_block, color=color, title=affil_block, font=font)
+        primary_counts[pid] += 1
+        net.add_edge(initial_id, pid, value=1)
+
+        for ctry, count in country_counts.items():
+            cnode = f"{pid}_{ctry}"
+            net.add_node(cnode, label=ctry, color='orange')
+            net.add_edge(pid, cnode, value=count, title=f"{count} secondary coauthors")
+
+    safe_name = initial_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+    output_path = f"D:/aa030/output/coauthor_network_{safe_name}_{initial_id}.html"
+    net.write_html(output_path)
+    print(f"[SAVED] {output_path}")
     initial_id = str(entity['scopus_id'])
     initial_name = entity['matched_name']
     primary_subset = primary_df[primary_df['matched_name'] == initial_name]
