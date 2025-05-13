@@ -1,0 +1,24 @@
+# === Cell 10b: Test Author Profile Pull for a Single SCOPUS ID ===
+
+# Set your test SCOPUS ID here
+scopus_id = "asdfadsfasdf"  # Replace with a real ID for testing
+
+url = f"https://api.elsevier.com/content/author/author_id/{scopus_id}?view=ENHANCED"
+resp = requests.get(url, headers=headers)
+
+print(f"[API] Status code: {resp.status_code}")
+
+if resp.status_code != 200:
+    print("[ERROR] Failed to retrieve profile.")
+else:
+    try:
+        data = resp.json()['author-retrieval-response'][0]
+        affil = data.get('affiliation-current', {})
+        print("\n[RESULT] Current Affiliation Data:")
+        print(f"  Name: {data.get('preferred-name', {}).get('given-name', '')} {data.get('preferred-name', {}).get('surname', '')}")
+        print(f"  SCOPUS ID: {scopus_id}")
+        print(f"  Affiliation Name: {affil.get('affiliation-name', '')}")
+        print(f"  Affiliation City: {affil.get('affiliation-city', '')}")
+        print(f"  Affiliation Country: {affil.get('affiliation-country', '')}")
+    except Exception as e:
+        print(f"[ERROR] Exception parsing JSON: {e}")
