@@ -1,94 +1,52 @@
-# === Cell 10: Summary Graph by Country per Primary Co-Author (with paper counts) ===
+# === Cell 10: Enrich primary and secondary coauthor CSVs with profile-level affiliation data ===
 
-from pyvis.network import Network
 import pandas as pd
-from collections import defaultdict
+import requests
+import time
 
-# Load data
-entity_df = pd.read_csv("D:/aa030/output/entity_resolution_output.csv")
+# Load primary and secondary coauthor files
 primary_df = pd.read_csv("D:/aa030/output/primary_coauthor_output.csv")
 secondary_df = pd.read_csv("D:/aa030/output/secondary_coauthor_output.csv")
 
-# Red-flag country list
-red_flag_countries = [
-    "COUNTRY NAME 1 HERE", "COUNTRY NAME 2 HERE", "COUNTRY NAME 3 HERE", "COUNTRY NAME 4 HERE",
-    "COUNTRY NAME 5 HERE", "COUNTRY NAME 6 HERE", "COUNTRY NAME 7 HERE", "COUNTRY NAME 8 HERE",
-    "COUNTRY NAME 9 HERE", "COUNTRY NAME 10 HERE", "COUNTRY NAME 11 HERE", "COUNTRY NAME 12 HERE",
-    "COUNTRY NAME 13 HERE", "COUNTRY NAME 14 HERE", "COUNTRY NAME 15 HERE", "COUNTRY NAME 16 HERE",
-    "COUNTRY NAME 17 HERE", "COUNTRY NAME 18 HERE", "COUNTRY NAME 19 HERE", "COUNTRY NAME 20 HERE",
-    "COUNTRY NAME 21 HERE", "COUNTRY NAME 22 HERE"
-]
-red_flag_set = {str(c).lower() for c in red_flag_countries}
+# Build list of unique SCOPUS IDs to enrich
+primary_ids = set(primary_df['coauthor_scopusid'].astype(str))
+secondary_ids = set(secondary_df['2ndcoauthor_scopusid'].astype(str))
+all_ids = primary_ids.union(secondary_ids)
 
-# Track processed entities
-seen = set()
+# Query SCOPUS Author API for each unique ID
+profile_lookup = {}
+for scopus_id in all_ids:
+    url = f"https://api.elsevier.com/content/author/author_id/{scopus_id}?view=ENHANCED"
+    resp = requests.get(url, headers=headers)
+    time.sleep(1)  # Respect rate limits
 
-# Precompute paper counts between initial ↔ primary
-primary_counts = defaultdict(int)
-for _, row in primary_df.iterrows():
-    key = (str(row['matched_name']).strip(), str(row['coauthor_scopusid']))
-    primary_counts[key] += 1
-
-# Precompute paper counts per country for each coauthor
-secondary_country_counts = defaultdict(lambda: defaultdict(int))
-for _, row in secondary_df.iterrows():
-    cid = str(row['coauthor_scopusid'])
-    country = str(row['2ndcoauthor_affiliation_country']).strip()
-    if country:
-        secondary_country_counts[cid][country] += 1
-
-for _, row in entity_df.iterrows():
-    initial_id = str(row['scopus_id']).strip()
-    initial_name = str(row['matched_name']).strip()
-    if (initial_id, initial_name) in seen:
+    if resp.status_code != 200:
+        print(f"[SKIP] Failed to retrieve profile for {scopus_id}: {resp.status_code}")
         continue
-    seen.add((initial_id, initial_name))
 
-    net = Network(height='1000px', width='100%', bgcolor='#ffffff', font_color='black')
-    initial_label = f"{initial_name}\n{initial_id}"
-    net.add_node(initial_id, label=initial_label, color='gray', title=initial_label)
+    try:
+        data = resp.json()['author-retrieval-response'][0]
+        affil = data.get('affiliation-current', {})
+        profile_lookup[scopus_id] = {
+            'latest_affiliation': affil.get('affiliation-name', ''),
+            'latest_affiliation_city': affil.get('affiliation-city', ''),
+            'latest_affiliation_country': affil.get('affiliation-country', '')
+        }
+    except Exception as e:
+        print(f"[ERROR] Failed to parse profile for {scopus_id}: {e}")
 
-    primary_subset = primary_df[primary_df['matched_name'].astype(str).str.strip() == initial_name]
-    primary_ids = set(primary_subset['coauthor_scopusid'].astype(str))
-    secondary_subset = secondary_df[secondary_df['coauthor_scopusid'].astype(str).isin(primary_ids)]
+# Add enriched fields to primary coauthors
+primary_df['latest_affiliation'] = primary_df['coauthor_scopusid'].astype(str).map(lambda x: profile_lookup.get(x, {}).get('latest_affiliation', ''))
+primary_df['latest_affiliation_city'] = primary_df['coauthor_scopusid'].astype(str).map(lambda x: profile_lookup.get(x, {}).get('latest_affiliation_city', ''))
+primary_df['latest_affiliation_country'] = primary_df['coauthor_scopusid'].astype(str).map(lambda x: profile_lookup.get(x, {}).get('latest_affiliation_country', ''))
 
-    for _, prow in primary_subset.iterrows():
-        pid = str(prow['coauthor_scopusid'])
-        pname = prow['coauthor_name']
-        affil = prow['coauthor_affiliation']
-        city = prow.get('coauthor_affiliation_city', '')
-        country = prow.get('coauthor_affiliation_country', '')
+# Add enriched fields to secondary coauthors
+secondary_df['latest_affiliation'] = secondary_df['2ndcoauthor_scopusid'].astype(str).map(lambda x: profile_lookup.get(x, {}).get('latest_affiliation', ''))
+secondary_df['latest_affiliation_city'] = secondary_df['2ndcoauthor_scopusid'].astype(str).map(lambda x: profile_lookup.get(x, {}).get('latest_affiliation_city', ''))
+secondary_df['latest_affiliation_country'] = secondary_df['2ndcoauthor_scopusid'].astype(str).map(lambda x: profile_lookup.get(x, {}).get('latest_affiliation_country', ''))
 
-        shared_papers = primary_counts.get((initial_name, pid), 1)
-        affil_line = f"{affil}, {city}, {country}".strip(', ')
-        label_lines = [f"{pname} ({shared_papers})", pid, affil_line]
+# Save updated files
+primary_df.to_csv("D:/aa030/output/primary_coauthor_output.csv", index=False)
+secondary_df.to_csv("D:/aa030/output/secondary_coauthor_output.csv", index=False)
 
-        # Country counts
-        country_lines = []
-        is_red_flag = str(country).lower() in red_flag_set
-        for ctry, count in sorted(secondary_country_counts[pid].items(), key=lambda x: -x[1]):
-            country_lines.append(f"{count} from {ctry}")
-            if str(ctry).lower() in red_flag_set:
-                is_red_flag = True
-
-        if country_lines:
-            label_lines.append("--- Secondary Coauthors ---")
-            label_lines.extend(country_lines)
-
-        full_label = "\n".join(label_lines)
-        node_color = 'red' if is_red_flag else 'blue'
-        font = {'color': 'red', 'bold': True} if is_red_flag else {}
-
-        net.add_node(pid, label=full_label, color=node_color, title=full_label, font=font)
-        net.add_edge(initial_id, pid, value=shared_papers, title=f"{shared_papers} shared papers")
-
-        for ctry, count in secondary_country_counts[pid].items():
-            cnode = f"{pid}_{ctry}"
-            ccolor = 'red' if str(ctry).lower() in red_flag_set else 'orange'
-            net.add_node(cnode, label=f"{ctry} ({count})", color=ccolor)
-            net.add_edge(pid, cnode, value=count, title=f"{count} secondary coauthors")
-
-    safe_name = initial_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    output_path = f"D:/aa030/output/coauthor_network_{safe_name}.html"
-    net.write_html(output_path)
-    print(f"[SAVED] {output_path}")
+print("[SAVED] Updated primary and secondary coauthor files with profile-level affiliation info.")
