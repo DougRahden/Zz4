@@ -14,10 +14,13 @@ secondary_ids = set(secondary_df['2ndcoauthor_scopusid'].astype(str))
 all_ids = primary_ids.union(secondary_ids)
 
 # Query SCOPUS Author API for each unique ID
+api_calls = {'author_profile_retrieval': 0}
 profile_lookup = {}
 for scopus_id in all_ids:
     url = f"https://api.elsevier.com/content/author/author_id/{scopus_id}?view=ENHANCED"
+    print(f"[API] Retrieving profile for SCOPUS ID {scopus_id}")
     resp = requests.get(url, headers=headers)
+    api_calls['author_profile_retrieval'] += 1
     time.sleep(1)  # Respect rate limits
 
     if resp.status_code != 200:
@@ -49,4 +52,8 @@ secondary_df['latest_affiliation_country'] = secondary_df['2ndcoauthor_scopusid'
 primary_df.to_csv("D:/aa030/output/primary_coauthor_output.csv", index=False)
 secondary_df.to_csv("D:/aa030/output/secondary_coauthor_output.csv", index=False)
 
-print("[SAVED] Updated primary and secondary coauthor files with profile-level affiliation info.")
+print("\n[SAVED] Updated primary and secondary coauthor files with profile-level affiliation info.")
+
+print("\n=== API USAGE SUMMARY ===")
+for k, v in api_calls.items():
+    print(f"{k}: {v}")
